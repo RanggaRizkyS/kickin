@@ -1,0 +1,23 @@
+{
+  "name": "football-club-discord-bot",
+  "version": "2.1.0",
+  "private": true,
+  "description": "Discord slash-command football player collection, squad building and 90-minute match log simulation game powered by MariaDB.",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "deploy-commands": "node src/deploy-commands.js",
+    "check": "node scripts/check.js",
+    "test": "node --test scripts/*.test.js",
+    "hash-admin-password": "node scripts/hash-admin-password.js"
+  },
+  "engines": { "node": ">=20.0.0" },
+  "dependencies": {
+    "@napi-rs/canvas": "1.2.0",
+    "bcryptjs": "2.4.3",
+    "discord.js": "14.21.0",
+    "dotenv": "16.4.7",
+    "mariadb": "3.4.0"
+  }
+}
