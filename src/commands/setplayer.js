@@ -7,10 +7,10 @@ const slots = ['GK','LB','LCB','RCB','RB','LCM','CDM','RCM','LW','ST','RW','LDM'
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('setplayer')
-    .setDescription('Place or replace a player in your starting XI.')
-    .addStringOption(option => option.setName('slot').setDescription('Position to fill').setRequired(true)
+    .setDescription('Assign a player to a position in your starting XI.')
+    .addStringOption(option => option.setName('slot').setDescription('Choose the position to fill').setRequired(true)
       .addChoices(...slots.map(value => ({ name: value, value }))))
-    .addStringOption(option => option.setName('player').setDescription('Search and select a player you own').setRequired(true).setAutocomplete(true)),
+    .addStringOption(option => option.setName('player').setDescription('Find a player in your collection').setRequired(true).setAutocomplete(true)),
   async autocomplete(interaction) {
     const user = await require('../services/users').getUserByDiscordId(interaction.user.id);
     if (!user) return interaction.respond([]);

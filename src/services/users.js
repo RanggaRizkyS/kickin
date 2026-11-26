@@ -55,7 +55,7 @@ async function selectStarterPlayers(conn) {
       return bRating - aRating || Number(b.overall) - Number(a.overall);
     });
     const player = candidates[0];
-    if (!player) throw new Error(`Tidak menemukan pemain awal untuk posisi ${preferred}.`);
+    if (!player) throw new Error(`No suitable starter was found for position ${preferred}.`);
     used.add(player.id);
     selected.push({ slotKey: slot.key, player });
   }
@@ -78,7 +78,7 @@ async function createPlayerCard(conn, userId, player, source, seasonId) {
       if (error.code !== 'ER_DUP_ENTRY' || attempt === 7) throw error;
     }
   }
-  throw new Error('Tidak bisa membuat ID kartu unik.');
+  throw new Error('Could not generate a unique card reference.');
 }
 
 async function ensureStarterSquad(userId, options = {}) {
@@ -114,7 +114,7 @@ async function ensureStarterSquad(userId, options = {}) {
 
 async function requireRegisteredUser(discordUser) {
   const user = await getUserByDiscordId(discordUser.id);
-  if (!user) throw new Error('Kamu belum terdaftar. Jalankan `/start` terlebih dahulu.');
+  if (!user) throw new Error('You do not have a club yet. Run `/start` first.');
   return user;
 }
 

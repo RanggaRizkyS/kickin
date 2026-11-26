@@ -16,15 +16,15 @@ const { FORMATIONS, estimatedOverall, xpRequired } = require('../utils/football'
 
 function assertOwner(interaction, ownerId) {
   if (String(interaction.user.id) !== String(ownerId)) {
-    throw new Error('Panel pemain ini hanya bisa digunakan oleh pemiliknya.');
+    throw new Error('This player panel belongs to another manager.');
   }
 }
 
 async function showPlayerCard(interaction, ownerId, cardId, { update = false, page = 1 } = {}) {
   const user = await require('../services/users').getUserByDiscordId(ownerId);
-  if (!user) throw new Error('Jalankan `/start` terlebih dahulu.');
+  if (!user) throw new Error('Run `/start` first.');
   const card = await getCard(cardId, Number(user.id));
-  if (!card) throw new Error('Kartu pemain tidak ditemukan di koleksimu.');
+  if (!card) throw new Error('That player card is not in your collection.');
   const player = card.player;
   const squad = await getSquadSnapshot(Number(user.id));
   const inSquad = squad.players.find(entry => entry.cardInstanceId === cardId || entry.publicId === cardId);
@@ -57,8 +57,7 @@ async function showPlayerCard(interaction, ownerId, cardId, { update = false, pa
       { name: 'Squad Status', value: inSquad ? `In Starting XI · **${inSquad.slotKey}**` : owned?.isListed ? 'Listed on User Market' : 'Available in My Players', inline: true },
       { name: 'Potential', value: `**${player.potential || player.overall}**`, inline: true }
     )
-    .setImage('attachment://selected-player.png')
-    .setFooter({ text: 'Select a position to place this card • Internal card reference is hidden' });
+    .setImage('attachment://selected-player.png');
 
   const components = [];
   if (!owned?.isListed) {
@@ -118,11 +117,11 @@ async function handlePlayerSelect(interaction) {
   if (action !== 'place') return;
   await interaction.deferUpdate();
   const user = await require('../services/users').getUserByDiscordId(ownerId);
-  if (!user) throw new Error('Jalankan `/start` terlebih dahulu.');
+  if (!user) throw new Error('Run `/start` first.');
   const slot = interaction.values[0];
   const result = await setSquadSlot(Number(user.id), slot, cardId);
   const panel = await buildSquadPanel(Number(user.id), ownerId);
-  panel.embed.setDescription(`✅ **${result.player}** ditempatkan pada posisi **${slot}**.\n\n${panel.embed.data.description || ''}`);
+  panel.embed.setDescription(`**${result.player}** assigned to **${slot}**.`);
   return interaction.editReply({ embeds: [panel.embed], files: panel.file ? [panel.file] : [], attachments: [], components: panel.components });
 }
 
@@ -137,7 +136,7 @@ async function handlePlayerButton(interaction) {
 
   if (action === 'back') {
     const user = await require('../services/users').getUserByDiscordId(ownerId);
-    if (!user) throw new Error('Jalankan `/start` terlebih dahulu.');
+    if (!user) throw new Error('Run `/start` first.');
     const playersCommand = require('../commands/players');
     const page = Math.max(1, Number(cardId) || 1);
     const result = await playersCommand.buildPage(
@@ -155,14 +154,14 @@ async function handlePlayerButton(interaction) {
   }
 
   const user = await require('../services/users').getUserByDiscordId(ownerId);
-  if (!user) throw new Error('Jalankan `/start` terlebih dahulu.');
+  if (!user) throw new Error('Run `/start` first.');
 
   if (action === 'sell') {
     const card = await getCard(cardId, Number(user.id));
-    if (!card) throw new Error('Kartu pemain tidak ditemukan.');
+    if (!card) throw new Error('Player card not found.');
     const embed = baseEmbed(
       '⚠️ CONFIRM PLAYER SALE',
-      `Kamu akan menjual **${card.player.name}** (${card.player.overall} OVR) ke System Market.\n\nPenjualan tidak dapat dibatalkan setelah dikonfirmasi.`,
+      `You are about to sell **${card.player.name}** (${card.player.overall} OVR) to the System Market.\n\nThis sale cannot be reversed after confirmation.`,
       0xc94c4c
     );
     const row = new ActionRowBuilder().addComponents(
@@ -176,7 +175,7 @@ async function handlePlayerButton(interaction) {
     const back = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(`player:back:${ownerId}:${page}`).setLabel('Back to My Players').setStyle(ButtonStyle.Secondary)
     );
-    return interaction.editReply({ embeds: [successEmbed('Sale Cancelled', 'Kartu tetap berada di My Players.')], components: [back], attachments: [] });
+    return interaction.editReply({ embeds: [successEmbed('Sale Cancelled', 'The card remains in My Players.')], components: [back], attachments: [] });
   }
 
   if (action === 'sell-yes') {
@@ -185,7 +184,7 @@ async function handlePlayerButton(interaction) {
       new ButtonBuilder().setCustomId(`player:back:${ownerId}:${page}`).setLabel('Back to My Players').setStyle(ButtonStyle.Secondary)
     );
     return interaction.editReply({
-      embeds: [successEmbed('Player Sold', `**${result.player.name}** berhasil dijual. Kamu menerima **${formatCredits(result.sellPrice)}**.`)],
+      embeds: [successEmbed('Player Sold', `**${result.player.name}** was sold. You received **${formatCredits(result.sellPrice)}**.`)],
       components: [back],
       attachments: []
     });

@@ -13,10 +13,10 @@ const { successEmbed, formatCredits, formatStrength } = require('../utils/messag
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('buy')
-    .setDescription('Beli pemain dari System Market atau User Market.')
+    .setDescription('Buy a player from the System Market or a manager listing.')
     .addStringOption(option => option
       .setName('type')
-      .setDescription('Sumber market')
+      .setDescription('Choose a market')
       .setRequired(true)
       .addChoices(
         { name: 'System Market', value: 'system' },
@@ -24,7 +24,7 @@ module.exports = {
       ))
     .addStringOption(option => option
       .setName('target')
-      .setDescription('Cari dan pilih listing pemain')
+      .setDescription('Search for a player or listing')
       .setRequired(true)
       .setAutocomplete(true)),
 
@@ -71,7 +71,7 @@ module.exports = {
     await interaction.editReply({
       embeds: [successEmbed(
         'PURCHASE SUCCESSFUL',
-        `**${typeof result.player === 'string' ? result.player : result.player.name}** berhasil ditambahkan ke My Players.\n\n` +
+        `**${typeof result.player === 'string' ? result.player : result.player.name}** has been added to My Players.\n\n` +
         `**Card ID:** \`${card?.publicId || 'PC-PENDING'}\`\n` +
         `**Price:** ${formatCredits(result.price ?? result.askingPrice)}\n` +
         `**Remaining Balance:** ${formatCredits(balanceRows[0]?.credits || 0)}\n` +

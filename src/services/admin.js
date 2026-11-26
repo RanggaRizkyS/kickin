@@ -17,13 +17,13 @@ async function checkAdminAttempts(discordId) {
 }
 
 async function loginAdmin(discordId, password) {
-  if (!userAllowed(discordId)) throw new Error('Akun Discord ini tidak termasuk allowlist admin.');
-  if (!config.admin.passwordHash) throw new Error('ADMIN_PASSWORD_HASH belum diatur di .env. Buat hash dengan `npm run hash-admin-password -- "password"`.');
+  if (!userAllowed(discordId)) throw new Error('This Discord account is not on the admin allowlist.');
+  if (!config.admin.passwordHash) throw new Error('ADMIN_PASSWORD_HASH is not set in .env. Generate one with `npm run hash-admin-password -- "your-password"`.');
   const attempts = await checkAdminAttempts(discordId);
-  if (attempts >= config.admin.maxAttempts) throw new Error(`Batas login tercapai: maksimal ${config.admin.maxAttempts} percobaan per ${config.admin.attemptWindowMinutes} menit.`);
+  if (attempts >= config.admin.maxAttempts) throw new Error(`Login limit reached: maximum ${config.admin.maxAttempts} attempts per ${config.admin.attemptWindowMinutes} minutes.`);
   const valid = await bcrypt.compare(password, config.admin.passwordHash);
   await getPool().query('INSERT INTO admin_login_attempts (discord_id,succeeded) VALUES (?,?)', [String(discordId), valid ? 1 : 0]);
-  if (!valid) throw new Error('Password admin salah.');
+  if (!valid) throw new Error('The administrator password is incorrect.');
   await getPool().query(
     `INSERT INTO discord_admin_sessions (discord_id,expires_at) VALUES (?,DATE_ADD(NOW(),INTERVAL ${Math.max(1, Math.trunc(config.admin.sessionMinutes))} MINUTE))
      ON DUPLICATE KEY UPDATE expires_at=VALUES(expires_at),created_at=CURRENT_TIMESTAMP`,
@@ -33,9 +33,9 @@ async function loginAdmin(discordId, password) {
 }
 
 async function requireAdminSession(discordId) {
-  if (!userAllowed(discordId)) throw new Error('Akun Discord ini tidak diizinkan mengakses admin.');
+  if (!userAllowed(discordId)) throw new Error('This Discord account is not allowed to access the admin panel.');
   const rows = await getPool().query('SELECT discord_id FROM discord_admin_sessions WHERE discord_id=? AND expires_at>NOW() LIMIT 1', [String(discordId)]);
-  if (!rows.length) throw new Error('Sesi admin tidak aktif. Jalankan `/admin login` terlebih dahulu.');
+  if (!rows.length) throw new Error('Your admin session is not active. Run `/admin login` first.');
   return true;
 }
 

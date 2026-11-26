@@ -84,11 +84,11 @@ async function connect() {
         connectTimeout: 10000
       });
       const safeName = config.db.database.replace(/[^a-zA-Z0-9_]/g, '');
-      if (!safeName) throw new Error('DB_NAME tidak valid.');
+      if (!safeName) throw new Error('DB_NAME is not valid.');
       await admin.query(`CREATE DATABASE IF NOT EXISTS \`${safeName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
     } catch (error) {
-      console.warn('[DB] Auto-create database dilewati:', error.message);
-      console.warn('[DB] Pastikan database sudah dibuat dan user MariaDB memiliki akses.');
+      console.warn('[DB] Database auto-creation skipped:', error.message);
+      console.warn('[DB] Make sure the database exists and the MariaDB user has the required permissions.');
     } finally {
       if (admin) await admin.end().catch(() => {});
     }
@@ -160,11 +160,11 @@ async function seedCatalog() {
   } finally {
     conn.release();
   }
-  console.log(`[DB] Catalog seeded: ${parsed.players.length} pemain fiktif.`);
+  console.log(`[DB] Catalog seeded: ${parsed.players.length} fictional players.`);
 }
 
 function getPool() {
-  if (!pool) throw new Error('Database belum terhubung.');
+  if (!pool) throw new Error('Database is not connected.');
   return pool;
 }
 async function close() {

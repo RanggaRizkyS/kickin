@@ -21,7 +21,7 @@ module.exports = {
     const user = await getRegistered(interaction);
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const card = await getCard(interaction.options.getString('player'), Number(user.id));
-    if (!card) throw new Error('Player card tidak ditemukan di koleksimu.');
+    if (!card) throw new Error('That player card is not in your collection.');
     const player = card.player;
     const currentOvr = estimatedOverall({ level: card.level, currentStats: card.currentStats }, player, player.positions?.primary);
     const buffer = await renderPlayerCard({ player, rarity: card.rarity, currentOvr, position: player.positions?.primary, currentStats: card.currentStats });
@@ -39,8 +39,7 @@ module.exports = {
         { name: 'Skills', value: (player.skills || []).map(item => item.name).join(', ') || 'None' },
         { name: 'Attributes', value: statsText || 'No stats' }
       )
-      .setImage('attachment://player-card.png')
-      .setFooter({ text: `Potential ${player.potential} · Player development increases through match performance` });
+      .setImage('attachment://player-card.png');
     await interaction.editReply({ embeds: [embed], files: [file] });
   }
 };

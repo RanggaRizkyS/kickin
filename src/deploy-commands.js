@@ -4,7 +4,7 @@ const { REST, Routes } = require('discord.js');
 const config = require('./config');
 
 async function main() {
-  if (!config.discord.token || !config.discord.clientId) throw new Error('DISCORD_TOKEN dan DISCORD_CLIENT_ID wajib diatur.');
+  if (!config.discord.token || !config.discord.clientId) throw new Error('Set DISCORD_TOKEN and DISCORD_CLIENT_ID before deploying commands.');
   const commandDir = path.join(__dirname, 'commands');
   const files = fs.readdirSync(commandDir).filter(file => file.endsWith('.js')).sort();
   const body = files.map(file => require(path.join(commandDir, file)).data.toJSON());
@@ -13,7 +13,7 @@ async function main() {
     ? Routes.applicationGuildCommands(config.discord.clientId, config.discord.guildId)
     : Routes.applicationCommands(config.discord.clientId);
   await rest.put(route, { body });
-  console.log(`[DEPLOY] ${body.length} slash command terdaftar ${config.discord.guildId ? `untuk guild ${config.discord.guildId}` : 'secara global'}.`);
+  console.log(`[DEPLOY] ${body.length} slash commands registered ${config.discord.guildId ? `for guild ${config.discord.guildId}` : 'globally'}.`);
 }
 
 main().catch(error => {

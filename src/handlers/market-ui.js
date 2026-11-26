@@ -2,8 +2,7 @@ const {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  StringSelectMenuBuilder,
-  AttachmentBuilder
+  StringSelectMenuBuilder
 } = require('discord.js');
 const { getPool } = require('../db');
 const {
@@ -16,10 +15,15 @@ const {
   getCard
 } = require('../services/market');
 const { estimatedOverall } = require('../utils/football');
-const { renderMarketTable } = require('../services/market-renderer');
-const { baseEmbed, successEmbed, formatCredits, formatStrength } = require('../utils/message');
+const {
+  baseEmbed,
+  successEmbed,
+  formatCredits,
+  formatStrength,
+  truncate
+} = require('../utils/message');
 
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 12;
 
 function clean(value, max = 24) {
   const text = String(value ?? '').replace(/[|`\n\r]/g, ' ').trim();
@@ -28,7 +32,7 @@ function clean(value, max = 24) {
 
 function assertOwner(interaction, ownerDiscordId) {
   if (String(interaction.user.id) !== String(ownerDiscordId)) {
-    throw new Error('Panel market ini hanya bisa digunakan oleh pemiliknya. Jalankan `/market` untuk membuka panel pribadi.');
+    throw new Error('This market panel belongs to another manager. Run /market to open your own.');
   }
 }
 
@@ -37,27 +41,8 @@ async function resolveUser(discordId) {
     'SELECT id,discord_id,username,credits FROM users WHERE discord_id=? LIMIT 1',
     [String(discordId)]
   );
-  if (!rows.length) throw new Error('Jalankan `/start` terlebih dahulu.');
+  if (!rows.length) throw new Error('You do not have a club yet. Run /start first.');
   return rows[0];
-}
-
-function marketRowFields(entries, type, offset) {
-  return entries.map((entry, index) => {
-    const player = entry.player || entry;
-    const listingId = type === 'system' ? entry.listingId : entry.publicListingId;
-    const number = String(offset + index + 1).padStart(2, '0');
-    const ovr = Math.round(Number(entry.currentOvr ?? player.overall ?? 0));
-    const position = clean(player.positions?.primary || player.primary_position || '-', 8);
-    const price = formatCredits(type === 'system' ? entry.marketPrice : entry.askingPrice);
-    const stockOrSeller = type === 'system'
-      ? `Stock tersedia: **${Number(entry.stock || 0).toLocaleString('id-ID')}**`
-      : `Seller: **${clean(entry.sellerName || 'Manager', 50)}**`;
-    return {
-      name: `#${number} · ${clean(listingId || '—', 18)} · ${clean(player.name, 78)} · ${ovr} OVR`,
-      value: `**${position}** · ${String(entry.rarity || player.rarity || 'bronze').toUpperCase()} · **${price}**\n${stockOrSeller}`,
-      inline: false
-    };
-  });
 }
 
 function makePanelComponents({ ownerId, type, page, totalPages, entries }) {
@@ -68,9 +53,9 @@ function makePanelComponents({ ownerId, type, page, totalPages, entries }) {
       const listingId = type === 'system' ? entry.listingId : entry.publicListingId;
       const ovr = Number(entry.currentOvr ?? entry.overall ?? player.overall ?? 0);
       const price = Number(type === 'system' ? entry.marketPrice : entry.askingPrice);
-      const position = player.positions?.primary || player.primary_position || '—';
+      const position = player.positions?.primary || player.primary_position || '-';
       return {
-        label: `${listingId} · ${player.name} · ${Math.round(ovr)} OVR`.slice(0, 100),
+        label: `${player.name} · ${Math.round(ovr)} OVR · ${listingId}`.slice(0, 100),
         value: String(listingId),
         description: `${position} · ${formatCredits(price)}${type === 'system' ? ` · Stock ${entry.stock}` : ` · ${entry.sellerName}`}`.slice(0, 100)
       };
@@ -78,7 +63,7 @@ function makePanelComponents({ ownerId, type, page, totalPages, entries }) {
     components.push(new ActionRowBuilder().addComponents(
       new StringSelectMenuBuilder()
         .setCustomId(`market:choose:${ownerId}:${type}:${page}`)
-        .setPlaceholder('Pilih Listing ID untuk melihat detail dan membeli')
+        .setPlaceholder('Inspect a listing')
         .addOptions(options)
     ));
   }
@@ -87,22 +72,16 @@ function makePanelComponents({ ownerId, type, page, totalPages, entries }) {
     new ButtonBuilder()
       .setCustomId(`market:prev:${ownerId}:${type}:${Math.max(1, page - 1)}`)
       .setEmoji('⬅️')
-      .setLabel('Previous')
       .setStyle(ButtonStyle.Secondary)
       .setDisabled(page <= 1),
     new ButtonBuilder()
       .setCustomId(`market:next:${ownerId}:${type}:${Math.min(totalPages, page + 1)}`)
       .setEmoji('➡️')
-      .setLabel('Next')
-      .setStyle(ButtonStyle.Primary)
+      .setStyle(ButtonStyle.Secondary)
       .setDisabled(page >= totalPages),
     new ButtonBuilder()
       .setCustomId(`market:switch:${ownerId}:${type}:1`)
-      .setLabel(type === 'system' ? 'User Market' : 'System Market')
-      .setStyle(ButtonStyle.Success),
-    new ButtonBuilder()
-      .setCustomId(`market:refresh:${ownerId}:${type}:${page}`)
-      .setLabel('Refresh')
+      .setLabel(type === 'system' ? 'User listings' : 'System market')
       .setStyle(ButtonStyle.Secondary)
   ));
   return components;
@@ -128,29 +107,36 @@ async function buildMarketPanel(userId, ownerId, type = 'system', requestedPage 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   if (page > totalPages) return buildMarketPanel(userId, ownerId, type, totalPages);
   const user = await resolveUser(ownerId);
-  const title = type === 'system' ? '🏪 SYSTEM PLAYER MARKET' : '🤝 COMMUNITY PLAYER MARKET';
-  const description = [
-    `**${total.toLocaleString('en-US')}** listing tersedia · Halaman **${page}/${totalPages}**`,
-    `Saldo: **${formatCredits(user.credits)}**`,
-    type === 'system'
-      ? 'Harga bergerak mengikuti stok dan permintaan global.'
-      : 'Listing berasal dari pengguna lain. Listing ID berbeda dari ID kartu milik pembeli.'
-  ].join('\n\n');
-
-  const embed = baseEmbed(title, description, type === 'system' ? 0x253a52 : 0x31513f);
-  embed.addFields(
-    { name: 'LISTINGS / PAGE', value: '**10**', inline: true },
-    { name: 'MARKET', value: type === 'system' ? '**System**' : '**User**', inline: true },
-    { name: 'SELECT BY', value: '**Listing ID**', inline: true }
+  const title = type === 'system' ? 'System Market' : 'Manager Listings';
+  const embed = baseEmbed(
+    title,
+    `${total.toLocaleString('en-US')} listings · Page ${page}/${totalPages} · Balance ${formatCredits(user.credits)}`,
+    type === 'system' ? 0x253a52 : 0x31513f
   );
-  embed.setFooter({ text: 'Pilih Listing ID dari dropdown untuk detail dan konfirmasi pembelian. ID listing berbeda dari ID kartu.' });
-  const tableBuffer = await renderMarketTable({ entries, type, page, total, balance: Number(user.credits || 0) });
-  const file = new AttachmentBuilder(tableBuffer, { name: 'player-market-table.png' });
-  embed.setImage('attachment://player-market-table.png');
+
+  const fields = entries.map((entry, index) => {
+    const player = entry.player || entry;
+    const listingId = type === 'system' ? entry.listingId : entry.publicListingId;
+    const ovr = Math.round(Number(entry.currentOvr ?? player.overall ?? 0));
+    const position = player.positions?.primary || player.primary_position || '-';
+    const rarity = String(entry.rarity || player.rarity || 'bronze').toUpperCase();
+    const price = formatCredits(type === 'system' ? entry.marketPrice : entry.askingPrice);
+    const availability = type === 'system'
+      ? `${Number(entry.stock || 0)} in stock`
+      : `Seller · ${truncate(entry.sellerName || 'Manager', 25)}`;
+    return {
+      name: `${String((page - 1) * PAGE_SIZE + index + 1).padStart(2, '0')} · ${truncate(player.name, 42)}`,
+      value: `**${ovr} OVR** · ${position} · ${rarity}
+${price} · ${availability}
+Listing \`${listingId}\``,
+      inline: true
+    };
+  });
+  if (fields.length) embed.addFields(fields);
+  else embed.setDescription('No listings are available on this page.');
 
   return {
     embed,
-    file,
     components: makePanelComponents({ ownerId, type, page, totalPages, entries }),
     type,
     page,
@@ -163,7 +149,6 @@ async function editWithPanel(interaction, userId, ownerId, type, page) {
   const panel = await buildMarketPanel(userId, ownerId, type, page);
   return interaction.editReply({
     embeds: [panel.embed],
-    files: panel.file ? [panel.file] : [],
     components: panel.components,
     attachments: []
   });
@@ -183,29 +168,27 @@ async function handleMarketSelect(interaction) {
   const price = type === 'system' ? item.marketPrice : item.askingPrice;
   const currentOvr = Number(item.currentOvr || player.overall);
   const rarity = item.rarity || player.rarity;
-  const position = player.positions?.primary || player.primary_position || '—';
-  const details = [
-    `**${player.nationality?.country || 'Unknown'}** · ${player.club?.name || 'Free Agent'}`,
-    `**${player.role?.name || 'Player'}** · ${position} · ${String(rarity).toUpperCase()}`,
-    '',
-    `**Listing ID:** \`${type === 'system' ? item.listingId : item.publicListingId}\``,
-    `**OVR:** ${formatStrength(currentOvr)}`,
-    `**Price:** ${formatCredits(price)}`,
-    type === 'system'
-      ? `**Stock:** ${Number(item.stock).toLocaleString('en-US')} cards`
-      : `**Seller:** ${item.sellerName}`,
-    `**Skills:** ${(player.skills || []).map(skill => skill.name).join(' · ') || 'No special skills'}`
-  ].join('\n');
-  const embed = baseEmbed(`⚽ ${player.name}`, details, rarity === 'gold' ? 0xd5a63c : rarity === 'silver' ? 0x9ba9b8 : 0xa97553);
-  embed.setFooter({ text: 'Konfirmasi pembelian untuk memproses transaksi secara aman.' });
+  const position = player.positions?.primary || player.primary_position || '-';
+  const embed = baseEmbed(
+    player.name,
+    `${position} · ${String(rarity).toUpperCase()} · ${clean(player.nationality?.country || 'Unknown', 36)}`,
+    rarity === 'gold' ? 0xd5a63c : rarity === 'silver' ? 0x9ba9b8 : 0xa97553
+  ).addFields(
+    { name: 'Overall', value: `**${formatStrength(currentOvr)} OVR**`, inline: true },
+    { name: 'Price', value: `**${formatCredits(price)}**`, inline: true },
+    { name: type === 'system' ? 'Stock' : 'Seller', value: type === 'system' ? `**${Number(item.stock).toLocaleString('en-US')}**` : truncate(item.sellerName || 'Manager', 60), inline: true },
+    { name: 'Club', value: truncate(player.club?.name || 'Free Agent', 80), inline: true },
+    { name: 'Role', value: truncate(player.role?.name || '—', 80), inline: true },
+    { name: 'Skills', value: truncate((player.skills || []).map(skill => skill.name).join(' · ') || '—', 900), inline: false },
+    { name: 'Listing', value: `\`${type === 'system' ? item.listingId : item.publicListingId}\``, inline: false }
+  );
 
   const page = Math.max(1, Number(pageText) || 1);
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(`market:buy:${ownerId}:${type}:${reference}:${page}`)
       .setLabel(`Buy · ${formatCredits(price)}`)
-      .setStyle(ButtonStyle.Success)
-      .setEmoji('🪙'),
+      .setStyle(ButtonStyle.Success),
     new ButtonBuilder()
       .setCustomId(`market:back:${ownerId}:${type}:${page}`)
       .setLabel('Back to Market')
@@ -223,7 +206,7 @@ async function handleMarketButton(interaction) {
   await interaction.deferUpdate();
   const user = await resolveUser(ownerId);
 
-  if (['prev', 'next', 'refresh', 'switch', 'back'].includes(action)) {
+  if (['prev', 'next', 'switch', 'back'].includes(action)) {
     const pageValue = Number(parts[4]) || 1;
     const nextType = action === 'switch' ? (type === 'system' ? 'user' : 'system') : type;
     const page = action === 'switch' ? 1 : Math.max(1, pageValue);
@@ -242,17 +225,17 @@ async function handleMarketButton(interaction) {
   }
 
   const card = await getCard(result.cardInstanceId, Number(user.id));
-  if (!card) throw new Error('Pembelian berhasil, tetapi kartu tidak dapat dimuat. Cek `/players`.');
+  if (!card) throw new Error('The purchase went through, but the new card could not be loaded. Check /players.');
   const balanceRows = await getPool().query('SELECT credits FROM users WHERE id=? LIMIT 1', [user.id]);
   const currentOvr = estimatedOverall({ level: card.level, currentStats: card.currentStats }, card.player, card.player.positions?.primary);
   const embed = successEmbed(
-    'PLAYER SIGNED',
-    `**${card.player.name}** berhasil masuk ke My Players.\n\n` +
-    `**Card ID:** \`${card.publicId}\`\n` +
-    `**OVR:** ${formatStrength(currentOvr)}\n` +
-    `**Purchase:** ${formatCredits(result.price)}\n` +
-    `**Remaining Balance:** ${formatCredits(balanceRows[0]?.credits || 0)}\n\n` +
-    'Gunakan `/players` untuk mengelola kartu tersebut.'
+    'Transfer Complete',
+    `**${card.player.name}** has been added to your collection.`
+  ).addFields(
+    { name: 'Overall', value: `**${formatStrength(currentOvr)} OVR**`, inline: true },
+    { name: 'Paid', value: `**${formatCredits(result.price)}**`, inline: true },
+    { name: 'Balance', value: `**${formatCredits(balanceRows[0]?.credits || 0)}**`, inline: true },
+    { name: 'Card ID', value: `\`${card.publicId}\``, inline: false }
   );
   const back = new ActionRowBuilder().addComponents(
     new ButtonBuilder()

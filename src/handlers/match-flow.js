@@ -56,12 +56,12 @@ async function handleMatchButton(interaction) {
   const flow = pendingFlows.get(token);
   if (!flow || flow.expiresAt < Date.now()) {
     pendingFlows.delete(token);
-    return interaction.reply({ content: 'Preview pertandingan sudah kedaluwarsa. Jalankan command pertandingan lagi.', flags: MessageFlags.Ephemeral });
+    return interaction.reply({ content: 'This match preview has expired. Run `/match` again.', flags: MessageFlags.Ephemeral });
   }
   if (action === 'cancel') {
     clearTimeout(flow.timer);
     pendingFlows.delete(token);
-    return interaction.update({ embeds: [errorEmbed('Pertandingan dibatalkan sebelum kick-off.')], components: [] });
+    return interaction.update({ embeds: [errorEmbed('The match was cancelled before kick-off.')], components: [] });
   }
   if (action === 'kickoff') {
     clearTimeout(flow.timer);
@@ -80,7 +80,7 @@ async function handleFriendlyButton(interaction) {
   await interaction.deferUpdate();
   if (action === 'decline') {
     await declineFriendlyInvitation(invitationId, interaction.user.id);
-    return interaction.editReply({ embeds: [errorEmbed('Undangan pertandingan ditolak.')], components: [] });
+    return interaction.editReply({ embeds: [errorEmbed('The challenge was declined.')], components: [] });
   }
   if (action !== 'accept') return;
 
@@ -89,12 +89,12 @@ async function handleFriendlyButton(interaction) {
     getUserById(accepted.fromId),
     getUserById(accepted.toId)
   ]);
-  if (!homeUser || !awayUser) throw new Error('Data salah satu pengguna tidak ditemukan.');
+  if (!homeUser || !awayUser) throw new Error('One of the manager records could not be found.');
   const [home, away] = await Promise.all([
     getSquadSnapshot(Number(homeUser.id)),
     getSquadSnapshot(Number(awayUser.id))
   ]);
-  if (!home.complete || !away.complete) throw new Error('Salah satu squad belum lengkap. Lengkapi 11 pemain sebelum Friendly.');
+  if (!home.complete || !away.complete) throw new Error('One of the line-ups is incomplete. Both managers need 11 players before kick-off.');
 
   const data = {
     mode: 'friendly',

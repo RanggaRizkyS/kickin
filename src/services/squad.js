@@ -16,7 +16,7 @@ function parsePlayerRow(row) {
 
 async function getSquadSnapshot(userId, conn = getPool()) {
   const squads = await conn.query('SELECT formation,squad_matches FROM user_squads WHERE user_id=? LIMIT 1', [userId]);
-  if (!squads.length) throw new Error('Squad belum dibuat. Jalankan `/start` terlebih dahulu.');
+  if (!squads.length) throw new Error('Your squad has not been created. Run `/start` first.');
   const squad = squads[0];
   const formation = FORMATIONS[squad.formation] ? squad.formation : '4-3-3';
   const slots = FORMATIONS[formation];
@@ -174,16 +174,16 @@ async function setSquadSlot(userId, slotKey, cardId) {
   try {
     await conn.beginTransaction();
     const squadRows = await conn.query('SELECT formation FROM user_squads WHERE user_id=? FOR UPDATE', [userId]);
-    if (!squadRows.length) throw new Error('Squad belum dibuat. Jalankan `/start`.');
+    if (!squadRows.length) throw new Error('Your squad has not been created. Run `/start` first.');
     const formation = squadRows[0].formation;
     const slot = FORMATIONS[formation].find(item => item.key === slotKey);
-    if (!slot) throw new Error(`Slot ${slotKey} tidak tersedia pada formasi ${formation}.`);
+    if (!slot) throw new Error(`Slot ${slotKey} is not available in formation ${formation}.`);
     const owned = await getOwnedCard(userId, cardId, conn);
-    if (!owned) throw new Error('Kartu tidak ditemukan di koleksimu. Pastikan memilih kartu milik akunmu dari autocomplete.');
-    if (owned.isListed) throw new Error('Kartu sedang dipasang di User Market.');
+    if (!owned) throw new Error('That card is not in your collection. Select one of your own cards from the player picker.');
+    if (owned.isListed) throw new Error('This card is currently listed on the User Market.');
     const actualCardId = owned.cardInstanceId;
     const goalKeeper = owned.player.stats?.type === 'goalkeeper';
-    if ((slot.label === 'GK') !== goalKeeper) throw new Error(slot.label === 'GK' ? 'Slot GK hanya menerima pemain goalkeeper.' : 'Goalkeeper hanya dapat mengisi slot GK.');
+    if ((slot.label === 'GK') !== goalKeeper) throw new Error(slot.label === 'GK' ? 'The GK slot only accepts a goalkeeper.' : 'A goalkeeper can only fill the GK slot.');
 
     const existingAtTarget = await conn.query('SELECT card_instance_id FROM squad_slots WHERE user_id=? AND slot_key=? FOR UPDATE', [userId, slotKey]);
     const existingLocation = await conn.query('SELECT slot_key FROM squad_slots WHERE user_id=? AND card_instance_id=? LIMIT 1 FOR UPDATE', [userId, actualCardId]);
@@ -199,7 +199,7 @@ async function setSquadSlot(userId, slotKey, cardId) {
       await conn.query('INSERT INTO squad_slots (user_id,slot_key,card_instance_id) VALUES (?,?,?)', [userId, slotKey, actualCardId]);
     } else if (oldPlayerSlot === slotKey) {
       await conn.commit();
-      return { changed: false, message: 'Pemain tersebut sudah berada di slot ini.' };
+      return { changed: false, message: 'That player is already in this position.' };
     } else if (oldTargetCard) {
       await conn.query('UPDATE squad_slots SET card_instance_id=? WHERE user_id=? AND slot_key=?', [actualCardId, userId, slotKey]);
     } else {
@@ -213,17 +213,17 @@ async function setSquadSlot(userId, slotKey, cardId) {
 
 async function removeSquadSlot(userId, slotKey) {
   const result = await getPool().query('DELETE FROM squad_slots WHERE user_id=? AND slot_key=?', [userId, slotKey]);
-  if (!result.affectedRows) throw new Error('Slot tersebut kosong atau tidak ditemukan.');
+  if (!result.affectedRows) throw new Error('That position is empty or could not be found.');
   return { removed: true };
 }
 
 async function setFormation(userId, nextFormation) {
-  if (!FORMATIONS[nextFormation]) throw new Error('Formasi tidak valid.');
+  if (!FORMATIONS[nextFormation]) throw new Error('That formation is not valid.');
   const conn = await getPool().getConnection();
   try {
     await conn.beginTransaction();
     const squadRows = await conn.query('SELECT formation FROM user_squads WHERE user_id=? FOR UPDATE', [userId]);
-    if (!squadRows.length) throw new Error('Squad belum dibuat.');
+    if (!squadRows.length) throw new Error('Your squad has not been created.');
     const oldFormation = squadRows[0].formation;
     if (oldFormation === nextFormation) { await conn.commit(); return { changed: false, formation: nextFormation }; }
     const oldRows = await conn.query(

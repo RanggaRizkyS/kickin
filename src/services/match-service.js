@@ -4,46 +4,21 @@ const config = require('../config');
 const { FORMATIONS, safeJson, round, clamp, randomInt, uuid } = require('../utils/football');
 const { getSquadSnapshot } = require('./squad');
 const { generateMatch } = require('./match-engine');
+const { botManagerNameForStrength, buildBotSquadFromCatalog, BOT_NAME_RANGES } = require('./bot-squad-builder');
 const { rewardMatch } = require('./economy');
 const { buildKickoffEmbed, buildLiveMatchEmbed, buildHalfTimeEmbed, buildMatchResultEmbed } = require('../utils/message');
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, Math.max(0, ms)));
 
 async function safeEditMessage(message, payload) {
-    try {
-        return await message.edit(payload);
-
-    } catch (error) {
-        console.error('[MATCH MESSAGE EDIT ERROR]', {
-            code: error?.code,
-            status: error?.status,
-            message: error?.message,
-            channelId: message?.channelId,
-            messageId: message?.id
-        });
-
-        if (error?.code === 10008) {
-            throw new Error(
-                'Pesan pertandingan tidak ditemukan. Pastikan pesan belum dihapus.'
-            );
-        }
-
-        if (error?.code === 50001) {
-            throw new Error(
-                'Bot tidak memiliki akses ke channel pertandingan.'
-            );
-        }
-
-        if (error?.code === 50013) {
-            throw new Error(
-                'Bot tidak memiliki izin mengirim atau memperbarui embed di channel.'
-            );
-        }
-
-        throw new Error(
-            `Gagal memperbarui pertandingan. Discord Error: ${error?.code || error?.message || 'Unknown'}`
-        );
+  try {
+    return await message.edit(payload);
+  } catch (error) {
+    if (error?.code === 10008 || error?.code === 50001) {
+      throw new Error('The match message could not be updated. Check that the bot can view the channel, send messages, and embed links.');
     }
+    throw error;
+  }
 }
 
 const activeMatchUsers = new Set();
@@ -113,90 +88,10 @@ async function findHumanOpponent(userId, strength) {
   return null;
 }
 
-const BOT_NAME_RANGES = [
-  { min: 0, max: 399, names: ['Joko Kodok', 'Udin Ngegas', 'Bowo Kerupuk', 'Tono Offside', 'Darto Kiper'] },
-  { min: 400, max: 799, names: ['Dimas Taktik', 'Rio Tendangan', 'Fajar Crossing', 'Raka Bek Kiri', 'Asep Penjaga'] },
-  { min: 800, max: 1199, names: ['Bagas Maestro', 'Nando Striker', 'Bima Playmaker', 'Rizky Counter', 'Ardi Pressing'] },
-  { min: 1200, max: 1599, names: ['Arga Taktikus', 'Rafael Goal', 'Marco Maestro', 'Kenji Captain', 'Dion Strategist'] },
-  { min: 1600, max: 2000, names: ['Sultan Pitch', 'Lord Taktikus', 'Raja Lapangan', 'The Professor', 'El Supremo'] }
-];
-
-function botManagerNameForStrength(strength, rng = Math.random) {
-  const power = clamp(Math.round(Number(strength || 0) * 20), 0, 2000);
-  const range = BOT_NAME_RANGES.find(item => power >= item.min && power <= item.max)
-    || BOT_NAME_RANGES[BOT_NAME_RANGES.length - 1];
-  const index = Math.floor(rng() * range.names.length);
-  return { name: range.names[index], power, range: `${range.min}-${range.max}` };
-}
-
 async function buildBotSquad(targetTeam, botName = null) {
-  const rows = await getPool().query('SELECT raw_json FROM players_catalog ORDER BY overall ASC');
+  const rows = await getPool().query('SELECT raw_json FROM players_catalog');
   const catalog = rows.map(row => safeJson(row.raw_json, {}));
-  const formations = Object.keys(FORMATIONS);
-  const formation = formations[randomInt(0, formations.length - 1)];
-  const slots = FORMATIONS[formation];
-
-  // Match the user's actual OVR + chemistry profile. Earlier versions gave
-  // every CPU a random 55–88 chemistry, which unfairly inflated bot strength
-  // against newly registered clubs with low familiarity.
-  const target = typeof targetTeam === 'object' && targetTeam
-    ? targetTeam
-    : { teamStrength: Number(targetTeam), teamOvr: Number(targetTeam), teamChemistry: 0 };
-  const desiredStrength = Number(target.teamStrength ?? targetTeam ?? 50);
-  const botIdentity = botName ? { ...botManagerNameForStrength(desiredStrength), name: botName } : botManagerNameForStrength(desiredStrength);
-  const userChemistry = Number(target.teamChemistry ?? 0);
-  const botChemistry = round(clamp(userChemistry + randomInt(-2, 2), 0, 100), 2);
-  const desiredOvr = clamp((desiredStrength * 2) - botChemistry, 40, 95);
-  const used = new Set();
-  const players = [];
-
-  for (const slot of slots) {
-    const isGk = slot.label === 'GK';
-    const candidates = catalog
-      .filter(player => !used.has(player.id) && ((player.stats?.type === 'goalkeeper') === isGk))
-      .map(player => ({
-        player,
-        score: Math.abs(Number(player.position_ratings?.[slot.label] || player.overall) - desiredOvr) + Math.random() * 1.2
-      }))
-      .sort((a, b) => a.score - b.score);
-    const player = candidates[0]?.player;
-    if (!player) throw new Error(`Bot tidak menemukan pemain untuk posisi ${slot.label}.`);
-    used.add(player.id);
-    players.push({
-      cardInstanceId: `BOT-${player.id}-${slot.key}`,
-      playerId: player.id,
-      slotKey: slot.key,
-      slotPosition: slot.label,
-      player,
-      level: 1,
-      xp: 0,
-      currentStats: player.stats?.type === 'goalkeeper'
-        ? (player.stats?.goalkeeper || {})
-        : (player.stats?.main || {}),
-      currentOvr: Number(player.position_ratings?.[slot.label] || player.overall),
-      shirtNumber: Number(player.shirt_number || 0),
-      chemistry: botChemistry,
-      chemistryDetails: { generated: true }
-    });
-  }
-
-  const teamOvr = round(players.reduce((sum, player) => sum + player.currentOvr, 0) / 11, 3);
-  const teamStrength = round((teamOvr + botChemistry) / 2, 3);
-  const botPersonality = ['possession', 'direct_play', 'wide_play', 'adaptive_press'].at(randomInt(0, 3));
-  return {
-    userId: null,
-    username: botIdentity.name,
-    formation,
-    players,
-    teamOvr,
-    teamChemistry: botChemistry,
-    teamStrength,
-    complete: true,
-    isBot: true,
-    botPersonality,
-    botPower: botIdentity.power,
-    botPowerRange: botIdentity.range
-  };
+  return buildBotSquadFromCatalog(targetTeam, catalog, { botName });
 }
 
 function matchResultForSide(sim, side) {
@@ -218,7 +113,7 @@ async function createRunningMatch({ mode, home, away, homeUserId, awayUserId, ho
       const active = await conn.query(
         "SELECT match_id FROM matches WHERE status='running' AND (home_user_id=? OR away_user_id=?) LIMIT 1 FOR UPDATE", [userId, userId]
       );
-      if (active.length) throw new Error('Kamu masih memiliki pertandingan yang sedang berjalan.');
+      if (active.length) throw new Error('One of your matches is still running.');
     }
     await conn.query(
       `INSERT INTO matches
@@ -279,7 +174,7 @@ async function runPreparedMatchDiscord({
   const participantIds = [homeUserId, awayUserId].filter(Boolean).map(Number);
   for (const userId of participantIds) {
     if (activeMatchUsers.has(userId)) {
-      throw new Error('Kamu masih memiliki pertandingan yang sedang berjalan.');
+      throw new Error('One of your matches is still running.');
     }
   }
   participantIds.forEach(userId => activeMatchUsers.add(userId));
@@ -353,25 +248,25 @@ async function runPreparedMatchDiscord({
     };
 
     for (let minute = 1; minute <= 90; minute += 1) {
-      const targetAt = startedAt + (minute * 1000);
+      // Keep every match-minute tick one second apart. The five-second
+      // half-time interval is additional to the 90 match minutes.
+      const secondHalfOffset = minute > 45 ? 5000 : 0;
+      const targetAt = startedAt + (minute * 1000) + secondHalfOffset;
       const waitMs = targetAt - Date.now();
       if (waitMs > 0) await sleep(waitMs);
 
-      // The simulation advances every second (one real second = one match minute).
-      // Publish each match minute immediately. The clock is monotonic and the
-      // ordered edit queue never blocks the next one-second simulation tick.
-      const shouldPublish = true;
-      if (shouldPublish) {
-        const view = { mode, homeName, awayName, home, away, sim: running.sim };
-        const embed = minute === 45
-          ? buildHalfTimeEmbed(view)
-          : buildLiveMatchEmbed(view, minute);
-        dispatchEdit({ embeds: [embed], components: [] }, { priority: minute === 45 });
+      const view = { mode, homeName, awayName, home, away, sim: running.sim };
+      if (minute === 45) {
+        dispatchEdit({ embeds: [buildHalfTimeEmbed(view, 5)], components: [] }, { priority: true });
+        // Do not wait for Discord's REST latency before running the match clock.
+        // The scheduled second-half ticks begin five seconds after minute 45.
+        await sleep(5000);
+      } else {
+        dispatchEdit({ embeds: [buildLiveMatchEmbed(view, minute)], components: [] });
       }
     }
 
-    // The simulation clock has now reached 90 seconds. Final persistence and
-    // the full-time result are performed once; no intro or half-time sleep is added.
+    // All 90 match-minute events have been processed. Persist the result once.
     const result = await completeMatch(running);
     await dispatchEdit({
       embeds: [buildMatchResultEmbed(result)],
@@ -396,29 +291,29 @@ async function runPreparedMatchDiscord({
 
 async function prepareQuickMatch(user, mode) {
   const squad = await getSquadSnapshot(user.id);
-  if (!teamIsComplete(squad)) throw new Error(`Squad belum lengkap. Slot kosong: ${squad.missingSlots.join(', ')}`);
+  if (!teamIsComplete(squad)) throw new Error(`Your squad is incomplete. Empty positions: ${squad.missingSlots.join(', ')}`);
   const humanOpponent = await findHumanOpponent(user.id, squad.teamStrength);
   if (humanOpponent) {
     const home = { ...squad, userId: Number(user.id), username: user.username };
     const away = { ...humanOpponent.squad, userId: humanOpponent.userId, username: humanOpponent.username };
     return { home, away, homeUserId: Number(user.id), awayUserId: humanOpponent.userId, homeName: user.username, awayName: humanOpponent.username, mode, viewerSide: 'home', opponentType: 'human' };
   }
-  if (mode === 'ranked') throw new Error('Belum ada pengguna dengan Team Strength yang sesuai. Ranked tidak menggunakan bot. Coba lagi nanti.');
+  if (mode === 'ranked') throw new Error('No manager with a close enough Team Strength is available. Ranked matches never use CPU opponents. Try again later.');
   const bot = await buildBotSquad(squad);
   const home = { ...squad, userId: Number(user.id), username: user.username };
   return { home, away: bot, homeUserId: Number(user.id), awayUserId: null, homeName: user.username, awayName: bot.username, mode: 'classic', viewerSide: 'home', opponentType: 'bot' };
 }
 
 async function createFriendlyInvitation(fromUser, targetDiscordId, channelId) {
-  if (String(fromUser.discord_id) === String(targetDiscordId)) throw new Error('Kamu tidak bisa menantang diri sendiri.');
+  if (String(fromUser.discord_id) === String(targetDiscordId)) throw new Error('You cannot challenge yourself.');
   const targetRows = await getPool().query('SELECT id,discord_id,username FROM users WHERE discord_id=? LIMIT 1', [targetDiscordId]);
-  if (!targetRows.length) throw new Error('Teman tersebut belum terdaftar. Minta dia menjalankan `/start` terlebih dahulu.');
+  if (!targetRows.length) throw new Error('That manager has not registered a club yet. Ask them to run /start first.');
   const target = targetRows[0];
   const existing = await getPool().query(
     "SELECT invitation_id FROM match_invitations WHERE from_user_id=? AND to_user_id=? AND status='pending' AND expires_at>NOW() LIMIT 1",
     [fromUser.id, target.id]
   );
-  if (existing.length) throw new Error('Kamu sudah memiliki undangan yang masih menunggu jawaban dari pengguna tersebut.');
+  if (existing.length) throw new Error('You already have a pending challenge for that manager.');
   const invitationId = uuid();
   await getPool().query(
     'INSERT INTO match_invitations (invitation_id,from_user_id,to_user_id,channel_id,expires_at) VALUES (?,?,?,?,DATE_ADD(NOW(),INTERVAL 10 MINUTE))',
@@ -436,9 +331,9 @@ async function acceptFriendlyInvitation(invitationId, targetDiscordId) {
        FROM match_invitations i JOIN users u ON u.id=i.from_user_id JOIN users t ON t.id=i.to_user_id
        WHERE i.invitation_id=? AND i.status='pending' AND i.expires_at>NOW() FOR UPDATE`, [invitationId]
     );
-    if (!rows.length) throw new Error('Undangan tidak tersedia atau sudah kedaluwarsa.');
+    if (!rows.length) throw new Error('This challenge is no longer available or has expired.');
     const invite = rows[0];
-    if (String(invite.to_discord_id) !== String(targetDiscordId)) throw new Error('Hanya pengguna yang ditantang yang dapat menerima undangan ini.');
+    if (String(invite.to_discord_id) !== String(targetDiscordId)) throw new Error('Only the invited manager can accept this challenge.');
     await conn.query("UPDATE match_invitations SET status='accepted' WHERE invitation_id=?", [invitationId]);
     await conn.commit();
     return { fromId: Number(invite.from_user_id), toId: Number(invite.to_user_id), fromName: invite.from_name, toName: invite.to_name };
@@ -452,7 +347,7 @@ async function declineFriendlyInvitation(invitationId, targetDiscordId) {
      SET i.status='declined' WHERE i.invitation_id=? AND u.discord_id=? AND i.status='pending'`,
     [invitationId, targetDiscordId]
   );
-  if (!rows.affectedRows) throw new Error('Undangan tidak ditemukan atau bukan milikmu.');
+  if (!rows.affectedRows) throw new Error('This challenge was not found or does not belong to you.');
   return true;
 }
 
@@ -461,8 +356,8 @@ async function getMatchLogs(matchId, userId, page = 1) {
     'SELECT events_json,home_name,away_name,home_score,away_score,mode,status,home_user_id,away_user_id FROM matches WHERE match_id=? AND (home_user_id=? OR away_user_id=?) LIMIT 1',
     [matchId, userId, userId]
   );
-  if (!rows.length) throw new Error('Pertandingan tidak ditemukan.');
-  if (rows[0].status !== 'completed') throw new Error('Log lengkap tersedia setelah pertandingan selesai.');
+  if (!rows.length) throw new Error('Match not found.');
+  if (rows[0].status !== 'completed') throw new Error('The full event log is available after the match is complete.');
   const logs = safeJson(rows[0].events_json, []);
   const pageSize = 15;
   const totalPages = Math.max(1, Math.ceil(logs.length / pageSize));
@@ -471,7 +366,7 @@ async function getMatchLogs(matchId, userId, page = 1) {
 }
 
 module.exports = {
-  teamIsComplete, findHumanOpponent, buildBotSquad, botManagerNameForStrength, createRunningMatch, completeMatch,
+  teamIsComplete, findHumanOpponent, buildBotSquad, botManagerNameForStrength, BOT_NAME_RANGES, createRunningMatch, completeMatch,
   prepareQuickMatch, createFriendlyInvitation,
   acceptFriendlyInvitation, declineFriendlyInvitation, getMatchLogs, runPreparedMatchDiscord
 };

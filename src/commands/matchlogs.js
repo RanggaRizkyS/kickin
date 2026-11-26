@@ -9,20 +9,20 @@ const { getRegistered } = require('../utils/commands');
 const { getUserByDiscordId } = require('../services/users');
 const { getPool } = require('../db');
 const { getMatchLogs } = require('../services/match-service');
-const { baseEmbed } = require('../utils/message');
+const { baseEmbed, truncate } = require('../utils/message');
+
+const PAGE_SIZE = 15;
 
 function buildNavigation(ownerDiscordId, matchId, page, totalPages) {
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(`matchlogs:prev:${ownerDiscordId}:${matchId}:${Math.max(1, page - 1)}`)
       .setEmoji('⬅️')
-      .setLabel('Previous 15')
       .setStyle(ButtonStyle.Secondary)
       .setDisabled(page <= 1),
     new ButtonBuilder()
       .setCustomId(`matchlogs:next:${ownerDiscordId}:${matchId}:${Math.min(totalPages, page + 1)}`)
       .setEmoji('➡️')
-      .setLabel('Next 15')
       .setStyle(ButtonStyle.Primary)
       .setDisabled(page >= totalPages)
   );
@@ -31,23 +31,24 @@ function buildNavigation(ownerDiscordId, matchId, page, totalPages) {
 async function buildLogPage(matchId, userId, ownerDiscordId, page = 1) {
   const result = await getMatchLogs(matchId, Number(userId), page);
   const mySide = Number(result.home_user_id) === Number(userId) ? 'home' : 'away';
-  const lines = result.logs.map(entry => {
-    const marker = entry.side === 'system'
-      ? '⚪'
-      : entry.side === mySide ? '🟩' : '🟥';
-    return `${marker} **${String(entry.minute).padStart(2, '0')}'** ${String(entry.text || '').slice(0, 220)}`;
+  const fields = result.logs.map(entry => {
+    const side = entry.side === 'system' ? 'MATCH' : entry.side === mySide ? 'YOUR TEAM' : 'OPPONENT';
+    const marker = entry.side === 'system' ? '▫️' : entry.side === mySide ? '🟩' : '🟥';
+    return {
+      name: `${marker} ${String(entry.minute).padStart(2, '0')}' · ${side}`,
+      value: truncate(String(entry.text || 'Match event'), 900),
+      inline: false
+    };
   });
 
   const embed = baseEmbed(
-    `📋 MATCH LOGS · ${result.page}/${result.totalPages}`,
-    `**${result.home_name}** ${result.home_score} — ${result.away_score} **${result.away_name}**\n` +
-    `Mode: **${String(result.mode).toUpperCase()}** · Page **${result.page}/${result.totalPages}**\n\n` +
-    (lines.join('\n') || 'Tidak ada log pada halaman ini.'),
-    0x3478bd
+    `Match Log · ${result.page}/${result.totalPages}`,
+    `**${result.home_name}** ${result.home_score} — ${result.away_score} **${result.away_name}**
+${String(result.mode).toUpperCase()} · ${result.total} events`,
+    0x35516f
   );
-  embed.setFooter({
-    text: `🟩 Tim kamu · 🟥 Lawan · ${result.total} log menit · 15 log per halaman`
-  });
+  if (fields.length) embed.addFields(fields);
+  else embed.setDescription(`${embed.data.description || ''}\nNo events on this page.`);
 
   return {
     embed,
@@ -60,34 +61,30 @@ async function handleMatchLogsButton(interaction) {
   const [, action, ownerDiscordId, matchId, pageText] = interaction.customId.split(':');
   if (String(interaction.user.id) !== String(ownerDiscordId)) {
     return interaction.reply({
-      content: 'Navigasi log ini hanya bisa digunakan oleh pemain yang membukanya.',
+      content: 'These match logs belong to another manager.',
       flags: MessageFlags.Ephemeral
     });
   }
   await interaction.deferUpdate();
   const user = await getUserByDiscordId(ownerDiscordId);
-  if (!user) throw new Error('Jalankan `/start` terlebih dahulu.');
+  if (!user) throw new Error('You do not have a club yet. Run `/start` first.');
   const page = Math.max(1, Number(pageText) || (action === 'next' ? 2 : 1));
   const view = await buildLogPage(matchId, Number(user.id), ownerDiscordId, page);
-  return interaction.editReply({
-    embeds: [view.embed],
-    components: view.components,
-    attachments: []
-  });
+  return interaction.editReply({ embeds: [view.embed], components: view.components, attachments: [] });
 }
 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('matchlogs')
-    .setDescription('Lihat semua 90 log menit pertandingan yang sudah selesai.')
+    .setDescription('Read the minute-by-minute log from a completed match.')
     .addStringOption(option => option
       .setName('match')
-      .setDescription('Cari pertandingan berdasarkan lawan atau mode')
+      .setDescription('Search your completed matches by opponent or mode')
       .setRequired(true)
       .setAutocomplete(true))
     .addIntegerOption(option => option
       .setName('page')
-      .setDescription('Halaman log (15 menit per halaman)')
+      .setDescription('Log page (15 match minutes per page)')
       .setMinValue(1)),
 
   async autocomplete(interaction) {
@@ -108,11 +105,11 @@ module.exports = {
       const opponent = isHome ? row.away_name : row.home_name;
       const ownScore = isHome ? row.home_score : row.away_score;
       const opponentScore = isHome ? row.away_score : row.home_score;
-      const date = new Date(row.created_at).toLocaleDateString('id-ID');
+      const date = new Date(row.created_at).toLocaleDateString('en-US');
       return {
         name: `${String(row.mode).toUpperCase()} · ${opponent} · ${ownScore}-${opponentScore} · ${date}`.slice(0, 100),
         value: row.match_id,
-        description: 'Completed match · 90 minute logs'
+        description: 'Completed · 90-minute match log'
       };
     }));
   },

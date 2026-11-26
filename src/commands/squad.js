@@ -5,7 +5,7 @@ const { buildSquadPanel } = require('../handlers/squad-ui');
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('squad')
-    .setDescription('Lihat dan kelola starting XI dalam tabel.'),
+    .setDescription('View your starting XI and manage its positions.'),
   async execute(interaction) {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const user = await getRegistered(interaction);

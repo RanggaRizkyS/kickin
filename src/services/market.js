@@ -77,9 +77,9 @@ async function buySystemPlayer(userId, playerId) {
       `SELECT p.*,s.stock,s.base_stock,s.purchases_24h,s.sales_24h FROM players_catalog p
        JOIN market_stock s ON s.player_id=p.player_id WHERE p.player_id=? FOR UPDATE`, [playerId]
     );
-    if (!rows.length) throw new Error('Pemain tidak ditemukan di System Market.');
+    if (!rows.length) throw new Error('Player not found in the System Market.');
     const row = rows[0];
-    if (Number(row.stock) <= 0) throw new Error('Stok System Market habis.');
+    if (Number(row.stock) <= 0) throw new Error('System Market stock is empty.');
     const player = safeJson(row.raw_json, {});
     const price = calculateMarketPrice(player, row.stock, row.base_stock, row.purchases_24h, row.sales_24h);
     await addCredits(conn, userId, -price, 'system_player_purchase', playerId);
@@ -102,7 +102,7 @@ async function sellToSystem(userId, cardReference) {
       'SELECT card_instance_id,player_id FROM user_player_cards WHERE user_id=? AND (card_instance_id=? OR public_id=?) LIMIT 1 FOR UPDATE',
       [userId, cardReference, cardReference]
     );
-    if (!ownedRows.length) throw new Error('Kartu pemain tidak ditemukan di koleksimu. Gunakan ID kartu dari `/players`.');
+    if (!ownedRows.length) throw new Error('That card is not in your collection. Use the Card ID shown in `/players`.');
     const cardId = ownedRows[0].card_instance_id;
     const playerId = ownedRows[0].player_id;
     await refreshPlayerWindow(conn, playerId);
@@ -111,12 +111,12 @@ async function sellToSystem(userId, cardReference) {
        FROM user_player_cards c JOIN players_catalog p ON p.player_id=c.player_id
        JOIN market_stock s ON s.player_id=p.player_id WHERE c.card_instance_id=? AND c.user_id=? FOR UPDATE`, [cardId, userId]
     );
-    if (!rows.length) throw new Error('Kartu pemain tidak ditemukan.');
+    if (!rows.length) throw new Error('Player card not found.');
     const row = rows[0];
     const inSquad = await conn.query('SELECT slot_key FROM squad_slots WHERE card_instance_id=? AND user_id=? LIMIT 1', [cardId, userId]);
-    if (inSquad.length) throw new Error('Keluarkan pemain dari squad sebelum menjualnya.');
+    if (inSquad.length) throw new Error('Remove this player from your squad before selling the card.');
     const listed = await conn.query("SELECT listing_id FROM user_market_listings WHERE card_instance_id=? AND status='active' LIMIT 1", [cardId]);
-    if (listed.length) throw new Error('Kartu sedang dipasang di User Market.');
+    if (listed.length) throw new Error('This card is already listed on the User Market.');
     const player = safeJson(row.raw_json, {});
     const current = calculateMarketPrice(player, row.stock, row.base_stock, row.purchases_24h, row.sales_24h);
     const sellPrice = Math.max(25, Math.round(current * 0.72));
@@ -139,7 +139,7 @@ async function createUserListing(userId, cardReference, askingPrice) {
       'SELECT card_instance_id,player_id FROM user_player_cards WHERE user_id=? AND (card_instance_id=? OR public_id=?) LIMIT 1 FOR UPDATE',
       [userId, cardReference, cardReference]
     );
-    if (!cardRows.length) throw new Error('Kartu pemain tidak ditemukan di koleksimu.');
+    if (!cardRows.length) throw new Error('That player card is not in your collection.');
     const cardId = cardRows[0].card_instance_id;
     await refreshPlayerWindow(conn, cardRows[0].player_id);
     const rows = await conn.query(
@@ -147,19 +147,19 @@ async function createUserListing(userId, cardReference, askingPrice) {
        FROM user_player_cards c JOIN players_catalog p ON p.player_id=c.player_id JOIN market_stock s ON s.player_id=p.player_id
        WHERE c.card_instance_id=? AND c.user_id=? FOR UPDATE`, [cardId, userId]
     );
-    if (!rows.length) throw new Error('Kartu pemain tidak ditemukan.');
+    if (!rows.length) throw new Error('Player card not found.');
     const row = rows[0];
     const used = await conn.query('SELECT 1 FROM squad_slots WHERE card_instance_id=? AND user_id=? LIMIT 1', [cardId, userId]);
-    if (used.length) throw new Error('Keluarkan pemain dari squad sebelum memasang listing.');
+    if (used.length) throw new Error('Remove this player from your squad before listing the card.');
     const existing = await conn.query("SELECT 1 FROM user_market_listings WHERE card_instance_id=? AND status='active' LIMIT 1", [cardId]);
-    if (existing.length) throw new Error('Kartu sudah dipasang di User Market.');
+    if (existing.length) throw new Error('This card already has an active User Market listing.');
     const player = safeJson(row.raw_json, {});
     const reference = calculateMarketPrice(player, row.stock, row.base_stock, row.purchases_24h, row.sales_24h);
     const price = Math.trunc(Number(askingPrice));
     const minPrice = Math.round(reference * config.economy.listingMinFactor);
     const maxPrice = Math.round(reference * config.economy.listingMaxFactor);
     if (!Number.isFinite(price) || price < minPrice || price > maxPrice) {
-      throw new Error(`Harga listing harus antara ${minPrice.toLocaleString('en-US')}–${maxPrice.toLocaleString('en-US')} CR.`);
+      throw new Error(`The listing price must be between ${minPrice.toLocaleString('en-US')}–${maxPrice.toLocaleString('en-US')} CR.`);
     }
     const listingId = uuid();
     const publicListingId = makePublicId('UL');
@@ -212,9 +212,9 @@ async function getSystemMarketItem(listingReference) {
      WHERE sml.listing_id=? OR p.player_id=? LIMIT 1`,
     [listingReference, listingReference]
   );
-  if (!rows.length) throw new Error('Listing System Market tidak ditemukan.');
+  if (!rows.length) throw new Error('System Market listing not found.');
   const row = rows[0];
-  if (Number(row.stock) <= 0) throw new Error('Stok pemain habis. Refresh market untuk melihat stok terbaru.');
+  if (Number(row.stock) <= 0) throw new Error('This player is out of stock at the current listing. Check the market again.');
   const player = safeJson(row.raw_json, {});
   return {
     id: row.player_id,
@@ -277,7 +277,7 @@ async function getUserListingById(listingReference) {
      WHERE (l.listing_id=? OR l.public_listing_id=?) AND l.status='active' LIMIT 1`,
     [listingReference, listingReference]
   );
-  if (!rows.length) throw new Error('Listing sudah tidak tersedia.');
+  if (!rows.length) throw new Error('This listing is no longer available.');
   const row = rows[0];
   const player = safeJson(row.raw_json, {});
   const currentStats = safeJson(row.current_stats_json, {});
@@ -307,9 +307,9 @@ async function buyUserListing(buyerId, listingReference) {
        WHERE (l.listing_id=? OR l.public_listing_id=?) AND l.status='active' FOR UPDATE`,
       [listingReference, listingReference]
     );
-    if (!rows.length) throw new Error('Listing tidak tersedia.');
+    if (!rows.length) throw new Error('This listing is unavailable.');
     const listing = rows[0];
-    if (Number(listing.seller_user_id) === Number(buyerId)) throw new Error('Kamu tidak dapat membeli listing milik sendiri.');
+    if (Number(listing.seller_user_id) === Number(buyerId)) throw new Error('You cannot buy your own listing.');
     const first = Math.min(Number(buyerId), Number(listing.seller_user_id));
     const second = Math.max(Number(buyerId), Number(listing.seller_user_id));
     await conn.query('SELECT id FROM users WHERE id IN (?,?) ORDER BY id FOR UPDATE', [first, second]);
@@ -330,7 +330,7 @@ async function cancelUserListing(userId, listingReference) {
     "UPDATE user_market_listings SET status='cancelled',completed_at=NOW() WHERE (listing_id=? OR public_listing_id=?) AND seller_user_id=? AND status='active'",
     [listingReference, listingReference, userId]
   );
-  if (!result.affectedRows) throw new Error('Listing tidak ditemukan atau sudah selesai.');
+  if (!result.affectedRows) throw new Error('This listing could not be found or has already closed.');
   return { cancelled: true };
 }
 
@@ -352,10 +352,10 @@ async function getRarityBuckets(conn) {
 
 async function openPack(userId, packType = 'pro', quantity = 1) {
   const pack = config.economy.packs?.[packType];
-  if (!pack) throw new Error('Jenis pack tidak valid.');
+  if (!pack) throw new Error('That pack type is not valid.');
   const count = Math.max(1, Math.min(config.economy.packMaxQuantity || 5, Number(quantity) || 1));
   const totalPrice = Number(pack.price) * count;
-  if (!Number.isSafeInteger(totalPrice) || totalPrice < 1) throw new Error('Harga pack tidak valid.');
+  if (!Number.isSafeInteger(totalPrice) || totalPrice < 1) throw new Error('The pack price is not valid.');
 
   const conn = await getPool().getConnection();
   try {
@@ -411,7 +411,7 @@ async function queryClaimState(conn, userId, { lock = false } = {}) {
      FROM users u WHERE u.id=? LIMIT 1${lock ? ' FOR UPDATE' : ''}`,
     [userId]
   );
-  if (!rows.length) throw new Error('Pengguna tidak ditemukan.');
+  if (!rows.length) throw new Error('Manager account not found.');
   return rows[0];
 }
 
@@ -427,7 +427,7 @@ async function claimPlayer(userId) {
     const userState = await queryClaimState(conn, userId, { lock: true });
     const status = claimStatusFromRow(userState);
     if (!status.available) {
-      const error = new Error('Claim belum tersedia.');
+      const error = new Error('Your next claim is not ready yet.');
       error.code = 'CLAIM_COOLDOWN';
       error.remainingMs = status.remainingMs;
       error.nextClaimAtMs = status.nextClaimAtMs;

@@ -5,7 +5,7 @@ const { buildRemovePlayerPanel } = require('../handlers/squad-ui');
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('removeplayer')
-    .setDescription('Pilih pemain dari tabel squad untuk dikembalikan ke My Players.'),
+    .setDescription('Choose a player in your squad to return to My Players.'),
   async execute(interaction) {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const user = await getRegistered(interaction);

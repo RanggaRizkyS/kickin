@@ -6,7 +6,7 @@ const { successEmbed } = require('../utils/message');
 
 module.exports = {
   data: new SlashCommandBuilder().setName('cancel-listing').setDescription('Remove one of your active User Market listings.')
-    .addStringOption(option => option.setName('listing').setDescription('Search and select your listing').setRequired(true).setAutocomplete(true)),
+    .addStringOption(option => option.setName('listing').setDescription('Find the listing you want to withdraw').setRequired(true).setAutocomplete(true)),
   async autocomplete(interaction) {
     const user = await require('../services/users').getUserByDiscordId(interaction.user.id);
     if (!user) return interaction.respond([]);
@@ -31,7 +31,7 @@ module.exports = {
     const listingId = interaction.options.getString('listing');
     await cancelUserListing(Number(user.id), listingId);
     await interaction.reply({
-      embeds: [successEmbed('Listing Cancelled', 'Listing berhasil ditarik. Kartu kembali tersedia di My Players.')],
+      embeds: [successEmbed('Listing Cancelled', 'The listing has been withdrawn. The card is back in My Players.')],
       flags: MessageFlags.Ephemeral
     });
   }

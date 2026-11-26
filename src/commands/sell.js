@@ -5,11 +5,11 @@ const { getPlayerAutocomplete } = require('../services/squad');
 const { successEmbed, formatCredits } = require('../utils/message');
 
 module.exports = {
-  data: new SlashCommandBuilder().setName('sell').setDescription('Sell a card or list it on the User Market.')
-    .addStringOption(option => option.setName('type').setDescription('How to sell the card').setRequired(true)
+  data: new SlashCommandBuilder().setName('sell').setDescription('Sell a card to the system or list it for another manager.')
+    .addStringOption(option => option.setName('type').setDescription('Choose where to sell the card').setRequired(true)
       .addChoices({ name: 'Sell to System', value: 'system' }, { name: 'List on User Market', value: 'user' }))
-    .addStringOption(option => option.setName('player').setDescription('Search and select a card you own').setRequired(true).setAutocomplete(true))
-    .addIntegerOption(option => option.setName('price').setDescription('User Market asking price').setMinValue(1)),
+    .addStringOption(option => option.setName('player').setDescription('Find a card in your collection').setRequired(true).setAutocomplete(true))
+    .addIntegerOption(option => option.setName('price').setDescription('Asking price for the User Market listing').setMinValue(1)),
   async autocomplete(interaction) {
     const user = await require('../services/users').getUserByDiscordId(interaction.user.id);
     if (!user) return interaction.respond([]);
@@ -23,12 +23,12 @@ module.exports = {
     const cardId = interaction.options.getString('player');
     if (type === 'system') {
       const result = await sellToSystem(Number(user.id), cardId);
-      await interaction.editReply({ embeds: [successEmbed('Player Sold', `**${result.player.name}** berhasil dijual ke System Market. Kamu menerima **${formatCredits(result.sellPrice)}**.`)] });
+      await interaction.editReply({ embeds: [successEmbed('Player Sold', `**${result.player.name}** was sold to the System Market. You received **${formatCredits(result.sellPrice)}**.`)] });
     } else {
       const price = interaction.options.getInteger('price');
-      if (!price) throw new Error('Masukkan `price` untuk memasang listing User Market.');
+      if (!price) throw new Error('Enter `price` to create a User Market listing.');
       const result = await createUserListing(Number(user.id), cardId, price);
-      await interaction.editReply({ embeds: [successEmbed('Listing Created', `**${result.player.name}** dipasang di User Market dengan harga **${formatCredits(result.askingPrice)}**. Listing tidak ditampilkan dengan ID internal.`)] });
+      await interaction.editReply({ embeds: [successEmbed('Listing Created', `**${result.player.name}** was listed on the User Market for **${formatCredits(result.askingPrice)}**. The listing uses a public listing reference.`)] });
     }
   }
 };

@@ -1,24 +1,35 @@
 const {
   SlashCommandBuilder,
   MessageFlags,
-  AttachmentBuilder,
   ActionRowBuilder,
-  ButtonBuilder,
-  ButtonStyle,
   StringSelectMenuBuilder
 } = require('discord.js');
 const { getRegistered, clampPage } = require('../utils/commands');
 const { getPool } = require('../db');
 const { safeJson, estimatedOverall, xpRequired } = require('../utils/football');
 const { calculateMarketPrice, refreshMarketWindows } = require('../services/market');
-const { baseEmbed, formatCredits } = require('../utils/message');
-const { renderPlayersList } = require('../services/players-list-renderer');
+const { baseEmbed, formatCredits, pageButtons, truncate } = require('../utils/message');
 
 const PAGE_SIZE = 20;
 
-function clean(value, maxLength = 80) {
-  const text = String(value ?? '').replace(/[|`\n\r]/g, ' ').trim();
-  return text.length > maxLength ? `${text.slice(0, Math.max(1, maxLength - 1))}…` : text;
+function statusLabel(row) {
+  if (row.statusCode === 'IN XI') return 'In starting XI';
+  if (row.statusCode === 'LISTED') return 'Listed on market';
+  return 'Available';
+}
+
+function playerFields(rows, page) {
+  return rows.map((row, index) => {
+    const number = String((page - 1) * PAGE_SIZE + index + 1).padStart(2, '0');
+    const skill = row.skills[0] || 'No signature skill';
+    return {
+      name: `${number} · ${truncate(row.name, 48)} · ${Math.round(row.currentOvr)} OVR`,
+      value: `**${row.primaryPosition}** · ${String(row.rarity).toUpperCase()}\n` +
+        `Card ID: \`${row.publicId}\` · Lv.${row.level}/50 · ${statusLabel(row)}\n` +
+        `${truncate(skill, 56)} · Sell ${row.sellPriceText}`,
+      inline: true
+    };
+  });
 }
 
 async function buildPage(userId, page, username = 'Your Club', ownerDiscordId = String(userId)) {
@@ -60,7 +71,7 @@ async function buildPage(userId, page, username = 'Your Club', ownerDiscordId = 
     const required = xpRequired(Number(row.level));
     return {
       cardInstanceId: row.card_instance_id,
-      publicId: row.public_id || row.card_instance_id,
+      publicId: row.public_id || 'PC-PENDING',
       playerId: row.player_id,
       name: row.name,
       overall: Number(row.overall),
@@ -81,64 +92,39 @@ async function buildPage(userId, page, username = 'Your Club', ownerDiscordId = 
   });
 
   const embed = baseEmbed(
-    '👥 MY PLAYERS · COLLECTION',
+    'My Players',
     total
-      ? `**${clean(username, 64)}** · **${total}** player cards\nPage **${currentPage}/${totalPages}** · 20 cards per page. Use the dropdown to open a player. `
-      : `**${clean(username, 64)}**\n\nKoleksimu masih kosong. Gunakan \`/claim\`, \`/pack\`, atau \`/market\` untuk mendapatkan pemain.`,
-    0x202b3a
+      ? `**${truncate(username, 48)}** · ${total.toLocaleString('en-US')} cards\nPage **${currentPage} / ${totalPages}** · ${PAGE_SIZE} per page`
+      : 'Your collection is empty. Start with `/claim` or browse `/market`.',
+    0x27394d
   );
-  embed.addFields(
-    { name: 'PLAYER CARDS', value: `**${total}**`, inline: true },
-    { name: 'PAGE', value: `**${currentPage}/${totalPages}**`, inline: true },
-    { name: 'ROWS / PAGE', value: '**20**', inline: true }
-  );
-  embed.setFooter({ text: 'Public Card ID ditampilkan pada tabel. Internal database UUID tidak ditampilkan.' });
-  const tableBuffer = await renderPlayersList({
-    rows: viewRows,
-    page: currentPage,
-    total,
-    username
-  });
-  const file = new AttachmentBuilder(tableBuffer, { name: 'my-players-table.png' });
-  embed.setImage('attachment://my-players-table.png');
+
+  if (viewRows.length) embed.addFields(playerFields(viewRows, currentPage));
 
   const components = [];
   if (viewRows.length) {
     const options = viewRows.map(row => ({
       label: `${row.publicId} · ${row.name} · ${Math.round(row.currentOvr)} OVR`.slice(0, 100),
       value: String(row.publicId),
-      description: `${row.primaryPosition} · Lv.${row.level}/50 · ${row.statusCode} · ${row.skills.slice(0, 2).join(', ') || row.rarity}`.slice(0, 100)
+      description: `${row.primaryPosition} · Lv.${row.level}/50 · ${statusLabel(row)}`.slice(0, 100)
     }));
     components.push(new ActionRowBuilder().addComponents(
       new StringSelectMenuBuilder()
         .setCustomId(`players:choose:${ownerDiscordId}:${currentPage}`)
-        .setPlaceholder('Pilih kartu untuk melihat detail, pasang, atau jual')
+        .setPlaceholder('Open a player card')
         .addOptions(...options)
     ));
   }
 
-  components.push(new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`players:prev:${ownerDiscordId}:${Math.max(1, currentPage - 1)}`)
-      .setEmoji('⬅️')
-      .setLabel('Previous')
-      .setStyle(ButtonStyle.Secondary)
-      .setDisabled(currentPage <= 1),
-    new ButtonBuilder()
-      .setCustomId(`players:next:${ownerDiscordId}:${Math.min(totalPages, currentPage + 1)}`)
-      .setEmoji('➡️')
-      .setLabel('Next')
-      .setStyle(ButtonStyle.Primary)
-      .setDisabled(currentPage >= totalPages)
-  ));
+  components.push(pageButtons('players', ownerDiscordId, currentPage, totalPages));
 
-  return { embed, file, components, page: currentPage, totalPages, total, rows: viewRows };
+  return { embed, components, page: currentPage, totalPages, total, rows: viewRows };
 }
 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('players')
-    .setDescription('Lihat koleksi pemain dalam tabel, 20 kartu per halaman.'),
+    .setDescription('Browse your collection of player cards.'),
 
   async execute(interaction) {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
@@ -151,9 +137,7 @@ module.exports = {
     );
     await interaction.editReply({
       embeds: [result.embed],
-      files: result.file ? [result.file] : [],
-      components: result.components,
-      attachments: []
+      components: result.components
     });
   },
 

@@ -10,14 +10,14 @@ const config = require('../config');
 const { getUserByDiscordId } = require('../services/users');
 const { openPack, getCard } = require('../services/market');
 const { renderPlayerCard } = require('../services/card-renderer');
-const { baseEmbed, successEmbed, errorEmbed, formatCredits } = require('../utils/message');
+const { baseEmbed, successEmbed, errorEmbed, formatCredits, truncate } = require('../utils/message');
 const { rarityFromOvr } = require('../utils/football');
 
 const pendingPackPurchases = new Set();
 
 function assertOwner(interaction, ownerId) {
   if (String(interaction.user.id) !== String(ownerId)) {
-    throw new Error('Menu pack ini hanya bisa digunakan oleh pembukanya. Jalankan `/pack` untuk membuka menu sendiri.');
+    throw new Error('This order belongs to another manager. Open your own pack counter with /pack.');
   }
 }
 
@@ -26,7 +26,6 @@ function normalizePackType(value) {
 }
 
 function maxPackQuantity() {
-  // Discord select menus allow at most 25 options.
   return Math.max(1, Math.min(25, Number(config.economy.packMaxQuantity) || 5));
 }
 
@@ -34,37 +33,44 @@ function normalizeQuantity(value) {
   return Math.max(1, Math.min(maxPackQuantity(), Number(value) || 1));
 }
 
+function packWeightText(weights = []) {
+  const [bronze = 0, silver = 0, gold = 0] = weights.map(Number);
+  return `Bronze ${bronze}% · Silver ${silver}% · Gold ${gold}%`;
+}
+
 function packComponents(ownerId, packType, quantity) {
   const packChoices = Object.entries(config.economy.packs).map(([key, pack]) => ({
     label: `${pack.name} · ${formatCredits(pack.price)}`.slice(0, 100),
     value: key,
-    description: `${pack.players} pemain per pack`.slice(0, 100),
+    description: `${pack.players} player cards · ${packWeightText(pack.weights)}`.slice(0, 100),
     default: key === packType
   }));
   const typeRow = new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
       .setCustomId(`pack:type:${ownerId}:${quantity}`)
-      .setPlaceholder('Pilih jenis pack')
+      .setPlaceholder('Select a pack')
       .addOptions(packChoices)
   );
 
-  const maxQty = maxPackQuantity();
-  const quantityChoices = Array.from({ length: maxQty }, (_, index) => {
+  const quantityChoices = Array.from({ length: maxPackQuantity() }, (_, index) => {
     const value = index + 1;
-    return { label: `${value} Pack${value > 1 ? 's' : ''}`, value: String(value), default: value === quantity };
+    return {
+      label: `${value} ${value === 1 ? 'pack' : 'packs'}`,
+      value: String(value),
+      default: value === quantity
+    };
   });
   const quantityRow = new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
       .setCustomId(`pack:quantity:${ownerId}:${packType}`)
-      .setPlaceholder('Pilih jumlah pack')
+      .setPlaceholder('Select quantity')
       .addOptions(quantityChoices)
   );
 
   const actionRow = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(`pack:confirm:${ownerId}:${packType}:${quantity}`)
-      .setLabel('Confirm Purchase')
-      .setEmoji('🎁')
+      .setLabel('Open pack')
       .setStyle(ButtonStyle.Success),
     new ButtonBuilder()
       .setCustomId(`pack:cancel:${ownerId}`)
@@ -78,34 +84,47 @@ async function buildPackPanel(ownerId, requestedType = 'pro', requestedQuantity 
   const packType = normalizePackType(requestedType);
   const quantity = normalizeQuantity(requestedQuantity);
   const user = await getUserByDiscordId(ownerId);
-  if (!user) throw new Error('Jalankan `/start` terlebih dahulu.');
-  const pack = config.economy.packs[packType];
-  const totalPrice = Number(pack.price) * quantity;
-  const totalPlayers = Number(pack.players) * quantity;
+  if (!user) throw new Error('Your club is not registered. Run /start first.');
 
-  const priceList = Object.entries(config.economy.packs).map(([key, entry]) =>
-    `**${entry.name}** · ${formatCredits(entry.price)} · ${entry.players} pemain`
-  ).join('\n');
+  const selected = config.economy.packs[packType];
+  const totalPrice = Number(selected.price) * quantity;
+  const totalCards = Number(selected.players) * quantity;
+  const balance = Number(user.credits || 0);
+  const shortfall = Math.max(0, totalPrice - balance);
+  const embed = baseEmbed(
+    'Pack Counter',
+    'Choose a pack and quantity. The order is charged only after confirmation.',
+    0x3b3544
+  );
 
-  const lines = [
-    '**DAFTAR PACK**',
-    priceList,
-    '',
-    `**Pilihan:** ${pack.name}`,
-    `**Quantity:** ${quantity}`,
-    `**Total pemain:** ${totalPlayers}`,
-    `**Total harga:** ${formatCredits(totalPrice)}`,
-    `**Saldo saat ini:** ${formatCredits(user.credits)}`,
-    ''
-  ];
-  if (notice) lines.unshift(`⚠️ ${notice}`, '');
-  lines.push(Number(user.credits) >= totalPrice
-    ? 'Saldo mencukupi. Tekan **Confirm Purchase** untuk membeli dan langsung membuka pack.'
-    : `Saldo belum mencukupi. Kamu kekurangan **${formatCredits(totalPrice - Number(user.credits))}**.`);
+  embed.addFields(Object.entries(config.economy.packs).map(([key, pack]) => ({
+    name: `${key === packType ? '● ' : ''}${pack.name}`,
+    value: `**${formatCredits(pack.price)}** · ${Number(pack.players)} cards\n${packWeightText(pack.weights)}`,
+    inline: true
+  })));
 
-  const embed = baseEmbed('🎁 PLAYER PACK STORE', lines.join('\n'), 0xd6aa42);
-  embed.setFooter({ text: `Maksimal ${maxPackQuantity()} pack per transaksi · Hasil langsung ditampilkan setelah konfirmasi` });
-  return { embed, components: packComponents(ownerId, packType, quantity), packType, quantity, totalPrice };
+  embed.addFields({
+    name: 'Order Summary',
+    value: `**${selected.name}** × ${quantity}\n${totalCards} player cards · **${formatCredits(totalPrice)}**\nBalance ${formatCredits(balance)}${shortfall ? ` · Short ${formatCredits(shortfall)}` : ''}`,
+    inline: false
+  });
+
+  if (notice) {
+    embed.addFields({ name: 'Order Status', value: truncate(notice, 900), inline: false });
+  } else if (shortfall) {
+    embed.addFields({ name: 'Order Status', value: `You need **${formatCredits(shortfall)}** more to place this order.`, inline: false });
+  }
+
+  return {
+    embed,
+    components: packComponents(ownerId, packType, quantity),
+    packType,
+    quantity,
+    totalPrice,
+    totalCards,
+    balance,
+    affordable: shortfall === 0
+  };
 }
 
 async function handlePackSelect(interaction) {
@@ -113,6 +132,7 @@ async function handlePackSelect(interaction) {
   const action = parts[1];
   const ownerId = parts[2];
   assertOwner(interaction, ownerId);
+
   let packType = 'pro';
   let quantity = 1;
   if (action === 'type') {
@@ -124,43 +144,38 @@ async function handlePackSelect(interaction) {
   } else {
     return;
   }
-  try {
-    await interaction.deferUpdate();
-    const panel = await buildPackPanel(ownerId, packType, quantity);
-    return await interaction.editReply({ embeds: [panel.embed], components: panel.components, attachments: [] });
-  } catch (error) {
-    const payload = { embeds: [errorEmbed(error.message || 'Tidak dapat memuat pack store.')], components: [], attachments: [] };
-    if (interaction.deferred || interaction.replied) return interaction.editReply(payload).catch(() => {});
-    return interaction.reply({ ...payload, flags: MessageFlags.Ephemeral }).catch(() => {});
-  }
+
+  await interaction.deferUpdate();
+  const panel = await buildPackPanel(ownerId, packType, quantity);
+  return interaction.editReply({ embeds: [panel.embed], components: panel.components, attachments: [] });
 }
 
 function packResultsFields(entries) {
   if (!entries.length) return [];
-  const rows = entries.map((entry, index) => {
-    const player = entry.player || {};
-    const id = String(entry.publicId || '—').slice(0, 12).padEnd(12);
-    const name = String(player.name || 'Unknown').replace(/[|`\n\r]/g, ' ').slice(0, 22).padEnd(22);
-    const ovr = String(Math.round(Number(player.overall || 0))).padStart(2);
-    const pos = String(player.positions?.primary || '-').slice(0, 3).padEnd(3);
-    const tier = String(rarityFromOvr(player.overall)).toUpperCase();
-    return `${String(index + 2).padStart(2, '0')}  ${id}  ${name}  ${ovr}  ${pos}  ${tier}`;
-  });
-
-  // Split long packs into valid Discord embed fields instead of truncating
-  // entries silently. One card image is reserved for the highest-OVR pull.
-  const chunks = [];
-  for (let index = 0; index < rows.length; index += 10) {
-    chunks.push(rows.slice(index, index + 10));
+  if (entries.length <= 18) {
+    return entries.map((entry, index) => {
+      const player = entry.player || {};
+      return {
+        name: `${String(index + 2).padStart(2, '0')} · ${truncate(player.name || 'Unknown player', 42)}`,
+        value: `**${Math.round(Number(player.overall || 0))} OVR** · ${player.positions?.primary || '-'} · ${rarityFromOvr(player.overall).toUpperCase()}\nCard ID · \`${entry.publicId || '—'}\``,
+        inline: true
+      };
+    });
   }
-  return chunks.map((chunk, index) => {
-    const table = ['NO  CARD ID       PLAYER                  OVR POS TIER', ...chunk].join('\n');
-    return {
-      name: `OTHER PLAYERS · ${index + 1}/${chunks.length}`,
-      value: `\`\`\`text\n${table}\n\`\`\``,
+
+  const fields = [];
+  for (let start = 0; start < entries.length; start += 5) {
+    const chunk = entries.slice(start, start + 5);
+    fields.push({
+      name: `Other pulls · ${start + 1}–${start + chunk.length}`,
+      value: chunk.map(entry => {
+        const player = entry.player || {};
+        return `**${truncate(player.name || 'Unknown player', 42)}** · ${Math.round(Number(player.overall || 0))} OVR · ${player.positions?.primary || '-'} · ${entry.publicId || '—'}`;
+      }).join('\n'),
       inline: false
-    };
-  });
+    });
+  }
+  return fields;
 }
 
 async function handlePackButton(interaction) {
@@ -171,19 +186,19 @@ async function handlePackButton(interaction) {
 
   if (action === 'cancel') {
     return interaction.update({
-      embeds: [baseEmbed('PACK PURCHASE CANCELLED', 'Tidak ada Credits yang dipotong dan tidak ada pemain yang diberikan.', 0x747b84)],
+      embeds: [baseEmbed('Order Cancelled', 'No Credits were charged.', 0x747b84)],
       components: [],
       attachments: []
     });
   }
-
   if (action !== 'confirm') return;
+
   const packType = normalizePackType(parts[3]);
   const quantity = normalizeQuantity(parts[4]);
   const purchaseLock = `${ownerId}:${interaction.message?.id || interaction.id}`;
   if (pendingPackPurchases.has(purchaseLock)) {
     return interaction.reply({
-      content: 'Pembelian pack ini sedang diproses. Tunggu hasilnya sebelum menekan konfirmasi lagi.',
+      content: 'This order is already being processed.',
       flags: MessageFlags.Ephemeral
     });
   }
@@ -192,10 +207,17 @@ async function handlePackButton(interaction) {
   try {
     await interaction.deferUpdate();
     const user = await getUserByDiscordId(ownerId);
-    if (!user) throw new Error('Akun tidak ditemukan. Jalankan `/start` terlebih dahulu.');
+    if (!user) throw new Error('Your club was not found. Run /start first.');
 
-    // The purchase transaction checks the live MariaDB balance and rolls back
-    // completely when the balance is insufficient.
+    const pack = config.economy.packs[packType];
+    const totalPrice = Number(pack.price) * quantity;
+    if (Number(user.credits) < totalPrice) {
+      const shortage = totalPrice - Number(user.credits);
+      const panel = await buildPackPanel(ownerId, packType, quantity,
+        `Order not placed. Your balance is short by ${formatCredits(shortage)}.`);
+      return interaction.editReply({ embeds: [panel.embed], components: panel.components, attachments: [] });
+    }
+
     const result = await openPack(Number(user.id), packType, quantity);
     const enriched = await Promise.all(result.players.map(async entry => {
       const card = await getCard(entry.cardInstanceId, Number(user.id));
@@ -206,7 +228,7 @@ async function handlePackButton(interaction) {
       };
     }));
     enriched.sort((a, b) => Number(b.player.overall) - Number(a.player.overall));
-    if (!enriched.length) throw new Error('Pack tidak menghasilkan kartu. Transaksi dibatalkan oleh sistem.');
+    if (!enriched.length) throw new Error('No cards were returned. The transaction was not completed.');
 
     const featured = enriched[0];
     const remaining = enriched.slice(1);
@@ -219,36 +241,26 @@ async function handlePackButton(interaction) {
     });
     const file = new AttachmentBuilder(image, { name: 'pack-highest-player.png' });
 
-    const description = [
-      `**${result.packName}** · ${result.quantity} pack`,
-      `Total kartu: **${enriched.length}**`,
-      `Total harga: **${formatCredits(result.totalPrice)}**`,
-      `Sisa saldo: **${formatCredits(result.balanceAfter)}**`,
-      '',
-      `**TOP PLAYER · ${featured.player.name} · ${featured.player.overall} OVR**`,
-      `Card ID: \`${featured.publicId}\``,
-      '',
-      remaining.length ? '**PEMAIN LAINNYA**' : '**Tidak ada kartu tambahan**'
-    ].join('\n');
+    const embed = successEmbed(
+      'Pack Opened',
+      `${result.packName} × ${result.quantity} · ${enriched.length} cards\n` +
+      `Spent ${formatCredits(result.totalPrice)} · Balance ${formatCredits(result.balanceAfter)}`,
+      0xc59a43
+    )
+      .addFields({
+        name: `Top pull · ${truncate(featured.player.name, 48)}`,
+        value: `**${Math.round(Number(featured.player.overall))} OVR** · ${featured.player.positions?.primary || '-'} · ${rarity.toUpperCase()}\nCard ID · \`${featured.publicId}\``,
+        inline: true
+      })
+      .setImage('attachment://pack-highest-player.png');
 
-    const embed = successEmbed('🎉 PACK OPENED!', description, 0xd6aa42)
-      .setImage('attachment://pack-highest-player.png')
-      .setFooter({ text: 'Hanya pemain dengan OVR tertinggi memakai gambar kartu. Pemain lain ditampilkan sebagai tabel.' });
     if (remaining.length) embed.addFields(...packResultsFields(remaining));
-
-    // Edit the deferred interaction reply, not interaction.message. This avoids
-    // stale-message fetch/abort races and replaces any previous attachment.
-    return interaction.editReply({
-      embeds: [embed],
-      files: [file],
-      attachments: [],
-      components: []
-    });
+    return interaction.editReply({ embeds: [embed], files: [file], attachments: [], components: [] });
   } catch (error) {
-    const panel = await buildPackPanel(ownerId, packType, quantity, error.message || 'Pembelian gagal.').catch(() => null);
+    const panel = await buildPackPanel(ownerId, packType, quantity, error.message || 'The order could not be completed.').catch(() => null);
     const payload = panel
       ? { embeds: [panel.embed], components: panel.components, attachments: [] }
-      : { embeds: [errorEmbed(error.message || 'Pack gagal dibuka.')], components: [], attachments: [] };
+      : { embeds: [errorEmbed(error.message || 'The pack could not be opened.')], components: [], attachments: [] };
     if (interaction.deferred || interaction.replied) return interaction.editReply(payload).catch(() => {});
     return interaction.reply({ ...payload, flags: MessageFlags.Ephemeral }).catch(() => {});
   } finally {

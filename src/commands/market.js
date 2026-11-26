@@ -5,10 +5,10 @@ const { buildMarketPanel } = require('../handlers/market-ui');
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('market')
-    .setDescription('Browse player cards and buy from the global or community market.')
+    .setDescription('Browse the System Market and cards listed by other managers.')
     .addStringOption(option => option
       .setName('type')
-      .setDescription('Choose which market to browse')
+      .setDescription('Choose a market to browse')
       .setRequired(true)
       .addChoices(
         { name: 'System Market', value: 'system' },

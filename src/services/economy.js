@@ -6,9 +6,9 @@ async function addCredits(conn, userId, amount, reason, referenceId = null) {
   const value = Math.trunc(Number(amount));
   if (!Number.isFinite(value) || value === 0) return null;
   const rows = await conn.query('SELECT credits FROM users WHERE id=? FOR UPDATE', [userId]);
-  if (!rows.length) throw new Error('Pengguna tidak ditemukan.');
+  if (!rows.length) throw new Error('Manager account not found.');
   const next = Number(rows[0].credits) + value;
-  if (next < 0) throw new Error('Credits tidak mencukupi.');
+  if (next < 0) throw new Error('You do not have enough Credits.');
   await conn.query('UPDATE users SET credits=? WHERE id=?', [next, userId]);
   await conn.query('INSERT INTO credit_transactions (user_id,amount,balance_after,reason,reference_id) VALUES (?,?,?,?,?)',
     [userId, value, next, reason, referenceId]);

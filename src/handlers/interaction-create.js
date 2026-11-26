@@ -12,7 +12,7 @@ const matchlogsCommand = require('../commands/matchlogs');
 async function ensureOwner(interaction, ownerId) {
   if (String(interaction.user.id) !== String(ownerId)) {
     await interaction.reply({
-      content: 'Panel ini hanya bisa digunakan oleh pemiliknya. Jalankan command terkait untuk membuka panel milikmu.',
+      content: 'This panel belongs to another manager. Run the command yourself to open a private panel.',
       flags: MessageFlags.Ephemeral
     });
     return false;
@@ -81,7 +81,7 @@ module.exports = async function handleInteraction(interaction, client) {
         await interaction.deferUpdate();
         const page = Math.max(1, Number(pageText) || 1);
         const user = await require('../services/users').getUserByDiscordId(interaction.user.id);
-        if (!user) return interaction.editReply({ content: 'Jalankan `/start` terlebih dahulu.', components: [] });
+        if (!user) return interaction.editReply({ content: 'Run `/start` first.', components: [] });
         const result = await playersCommand.buildPage(
           Number(user.id),
           page,

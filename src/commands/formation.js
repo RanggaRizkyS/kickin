@@ -4,8 +4,8 @@ const { setFormation } = require('../services/squad');
 const { buildSquadPanel } = require('../handlers/squad-ui');
 
 module.exports = {
-  data: new SlashCommandBuilder().setName('formation').setDescription('Change your squad formation and refresh the squad table.')
-    .addStringOption(option => option.setName('name').setDescription('Choose a formation').setRequired(true)
+  data: new SlashCommandBuilder().setName('formation').setDescription('Select your formation for your starting XI.')
+    .addStringOption(option => option.setName('name').setDescription('Select your formation').setRequired(true)
       .addChoices({ name: '4-3-3', value: '4-3-3' }, { name: '4-2-3-1', value: '4-2-3-1' }, { name: '4-4-2', value: '4-4-2' })),
   async execute(interaction) {
     const user = await getRegistered(interaction);

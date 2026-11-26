@@ -7,10 +7,10 @@ const { accountXpRequired } = require('../utils/football');
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('profile')
-    .setDescription('Lihat profil klub sendiri atau pengguna lain.')
+    .setDescription("View your club profile or another manager's record.")
     .addUserOption(option => option
       .setName('user')
-      .setDescription('Pengguna Discord yang profilnya ingin dilihat')
+      .setDescription('Optional manager to look up')
       .setRequired(false)),
 
   async execute(interaction) {
@@ -23,8 +23,8 @@ module.exports = {
     if (!rows.length) {
       return interaction.editReply({
         embeds: [baseEmbed(
-          'PROFILE NOT FOUND',
-          `<@${selectedUser.id}> belum mendaftarkan klub. Pengguna tersebut harus menjalankan \`/start\` terlebih dahulu.`,
+          'Club Not Found',
+          `<@${selectedUser.id}> has not registered a club yet. They can get started with \/start.`,
           0xd64b4b
         )]
       });
@@ -52,21 +52,21 @@ module.exports = {
     try {
       squad = await getSquadSnapshot(Number(user.id));
     } catch {
-      // Registered users can have a partially created squad; show the profile anyway.
+      // A registered manager can still have an incomplete squad.
     }
 
     const totalMatches = Number(matchRows[0]?.total || 0);
     const wins = Number(matchRows[0]?.wins || 0);
     const losses = Number(matchRows[0]?.losses || 0);
     const draws = Number(matchRows[0]?.draws || 0);
-    const winRate = totalMatches > 0 ? (wins / totalMatches) * 100 : 0;
+    const winRate = totalMatches ? (wins / totalMatches) * 100 : 0;
     const required = accountXpRequired(Number(user.account_level));
     const hasCompleteSquad = !!squad?.complete;
     const avatar = selectedUser.displayAvatarURL?.({ extension: 'png', size: 256 }) || user.avatar_url;
 
     const embed = baseEmbed(
-      `⚽ ${user.username}'s Club Profile`,
-      `Manager: <@${selectedUser.id}>\n${hasCompleteSquad ? 'Starting XI is ready for matches.' : 'Squad belum lengkap.'}`,
+      `${user.username}'s Club Profile`,
+      `Manager: <@${selectedUser.id}>\n${hasCompleteSquad ? 'The starting XI is ready for selection.' : 'The starting XI still needs attention.'}`,
       0x3478bd
     );
     if (avatar) embed.setThumbnail(avatar);
@@ -77,7 +77,7 @@ module.exports = {
       { name: 'Rank Points', value: `**${formatNumber(user.rank_points, 3)}**`, inline: true },
       { name: 'Account XP', value: `**${formatNumber(user.account_xp)} / ${formatNumber(required)}**`, inline: true },
       { name: 'Player Cards', value: `**${Number(cardRows[0]?.total || 0)}**`, inline: true },
-      { name: 'Total Matches', value: `**${totalMatches}**`, inline: true },
+      { name: 'Matches', value: `**${totalMatches}**`, inline: true },
       { name: 'Wins', value: `**${wins}**`, inline: true },
       { name: 'Draws', value: `**${draws}**`, inline: true },
       { name: 'Losses', value: `**${losses}**`, inline: true },
@@ -92,10 +92,9 @@ module.exports = {
         { name: 'Team Strength', value: `**${formatStrength(squad.teamStrength)}**`, inline: true }
       );
     } else {
-      embed.addFields({ name: 'Active Squad', value: 'Belum tersedia. Jalankan `/start` untuk membuat squad.', inline: false });
+      embed.addFields({ name: 'Active Squad', value: 'Not available yet. Run `/start` to create one.', inline: false });
     }
 
-    embed.setFooter({ text: 'Gunakan /players untuk melihat koleksi dan /squad untuk mengelola starting XI.' });
     await interaction.editReply({ embeds: [embed] });
   }
 };

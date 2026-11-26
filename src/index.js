@@ -7,7 +7,7 @@ const handleInteraction = require('./handlers/interaction-create');
 
 async function main() {
   if (!config.discord.token || !config.discord.clientId) {
-    throw new Error('DISCORD_TOKEN dan DISCORD_CLIENT_ID wajib diatur pada file .env.');
+    throw new Error('Set DISCORD_TOKEN and DISCORD_CLIENT_ID in your .env file.');
   }
 
   await connect();
@@ -18,15 +18,15 @@ async function main() {
   for (const file of files) {
     const command = require(path.join(commandDir, file));
     if (!command.data?.name || typeof command.execute !== 'function') {
-      console.warn(`[COMMAND] Lewati ${file}: data atau execute tidak valid.`);
+      console.warn(`[COMMAND] Skipping ${file}: has invalid command data or no execute handler.`);
       continue;
     }
     client.commands.set(command.data.name, command);
   }
 
   client.once(Events.ClientReady, readyClient => {
-    console.log(`[DISCORD] Login sebagai ${readyClient.user.tag}`);
-    console.log(`[DISCORD] ${client.commands.size} slash command dimuat.`);
+    console.log(`[DISCORD] Logged in as ${readyClient.user.tag}`);
+    console.log(`[DISCORD] ${client.commands.size} slash commands loaded.`);
   });
 
   client.on(Events.InteractionCreate, interaction => {
@@ -34,7 +34,7 @@ async function main() {
   });
 
   const shutdown = async signal => {
-    console.log(`[APP] ${signal} diterima, mematikan bot…`);
+    console.log(`[APP] ${signal} received; shutting down the bot…`);
     client.destroy();
     await close().catch(() => {});
     process.exit(0);
