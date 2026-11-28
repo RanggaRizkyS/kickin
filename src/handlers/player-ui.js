@@ -56,8 +56,7 @@ async function showPlayerCard(interaction, ownerId, cardId, { update = false, pa
       { name: 'Skills', value: (player.skills || []).map(item => item.name).join(' · ') || 'No special skills', inline: false },
       { name: 'Squad Status', value: inSquad ? `In Starting XI · **${inSquad.slotKey}**` : owned?.isListed ? 'Listed on User Market' : 'Available in My Players', inline: true },
       { name: 'Potential', value: `**${player.potential || player.overall}**`, inline: true }
-    )
-    .setImage('attachment://selected-player.png');
+    );
 
   const components = [];
   if (!owned?.isListed) {

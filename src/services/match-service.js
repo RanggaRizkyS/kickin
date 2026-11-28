@@ -4,7 +4,8 @@ const config = require('../config');
 const { FORMATIONS, safeJson, round, clamp, randomInt, uuid } = require('../utils/football');
 const { getSquadSnapshot } = require('./squad');
 const { generateMatch } = require('./match-engine');
-const { botManagerNameForStrength, buildBotSquadFromCatalog, BOT_NAME_RANGES } = require('./bot-squad-builder');
+const { botManagerNameForStrength, buildBotSquadFromCatalog, buildPositionIndex, BOT_NAME_RANGES } = require('./bot-squad-builder');
+const { getGameCatalog } = require('./catalog-cache');
 const { rewardMatch } = require('./economy');
 const { buildKickoffEmbed, buildLiveMatchEmbed, buildHalfTimeEmbed, buildMatchResultEmbed } = require('../utils/message');
 
@@ -47,6 +48,7 @@ function serializeTeam(team, username) {
       currentOvr: player.currentOvr,
       currentStats: player.currentStats,
       chemistry: player.chemistry,
+      teamChemistryMultiplier: player.teamChemistryMultiplier || 1,
       chemistryDetails: player.chemistryDetails,
       shirtNumber: player.shirtNumber,
       player: player.player
@@ -88,10 +90,17 @@ async function findHumanOpponent(userId, strength) {
   return null;
 }
 
+let botPositionIndexPromise = null;
+
 async function buildBotSquad(targetTeam, botName = null) {
-  const rows = await getPool().query('SELECT raw_json FROM players_catalog');
-  const catalog = rows.map(row => safeJson(row.raw_json, {}));
-  return buildBotSquadFromCatalog(targetTeam, catalog, { botName });
+  const catalog = await getGameCatalog();
+  if (!botPositionIndexPromise) {
+    botPositionIndexPromise = Promise.resolve(buildPositionIndex(catalog));
+  }
+  return buildBotSquadFromCatalog(targetTeam, catalog, {
+    botName,
+    positionIndex: await botPositionIndexPromise
+  });
 }
 
 function matchResultForSide(sim, side) {

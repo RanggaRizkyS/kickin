@@ -34,6 +34,25 @@ module.exports = {
     attemptWindowMinutes: num('ADMIN_ATTEMPT_WINDOW_MINUTES', 60),
     allowedUserIds: (process.env.ADMIN_USER_IDS || '').split(',').map(x => x.trim()).filter(Boolean)
   },
+  cardImages: {
+    gameVersion: (process.env.FUT_CARD_GAME_VERSION || 'FC26').toUpperCase(),
+    cacheDir: path.resolve(process.cwd(), process.env.FUT_CARD_CACHE_DIR || 'storage/card-cache'),
+    portraitCacheDir: path.resolve(process.cwd(), process.env.SOFIFA_PORTRAIT_CACHE_DIR || 'storage/player-portraits'),
+    sofifaReferer: process.env.SOFIFA_REFERER || 'https://sofifa.com/',
+    portraitMissingRetryHours: Math.max(1, num('SOFIFA_PORTRAIT_MISSING_RETRY_HOURS', 24)),
+    portraitFailedRetryMinutes: Math.max(1, num('SOFIFA_PORTRAIT_FAILED_RETRY_MINUTES', 30)),
+    mapPath: path.resolve(process.cwd(), process.env.FUT_CARD_IMAGE_MAP || 'data/card-image-map.json'),
+    urlTemplate: process.env.FUT_CARD_IMAGE_URL_TEMPLATE || '',
+    timeoutMs: Math.max(1000, Math.min(30000, num('FUT_CARD_IMAGE_TIMEOUT_MS', 9000))),
+    maxBytes: Math.max(1024, Math.min(20 * 1024 * 1024, num('FUT_CARD_IMAGE_MAX_BYTES', 10 * 1024 * 1024))),
+    missingRetryHours: Math.max(1, num('FUT_CARD_IMAGE_MISSING_RETRY_HOURS', 24)),
+    failedRetryMinutes: Math.max(1, num('FUT_CARD_IMAGE_FAILED_RETRY_MINUTES', 15)),
+    allowedHosts: (process.env.FUT_CARD_IMAGE_ALLOWED_HOSTS || 'ea.com,futbin.com,datafluxor.com,thecoinprinter.com').split(',').map(x => x.trim().toLowerCase()).filter(Boolean),
+    apiKey: process.env.FUT_CARD_IMAGE_API_KEY || '',
+    apiKeyHosts: (process.env.FUT_CARD_IMAGE_API_KEY_HOSTS || 'datafluxor.com,thecoinprinter.com').split(',').map(x => x.trim().toLowerCase()).filter(Boolean),
+    apiKeyHeader: process.env.FUT_CARD_IMAGE_API_KEY_HEADER || 'X-API-Key',
+    apiKeyPrefix: process.env.FUT_CARD_IMAGE_API_KEY_PREFIX || ''
+  },
   economy: {
     startingCredits: num('STARTING_CREDITS', 5000),
     baseStock: num('SYSTEM_MARKET_BASE_STOCK', 25),

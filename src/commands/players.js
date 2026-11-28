@@ -33,7 +33,6 @@ function playerFields(rows, page) {
 }
 
 async function buildPage(userId, page, username = 'Your Club', ownerDiscordId = String(userId)) {
-  await refreshMarketWindows();
   const countRows = await getPool().query(
     'SELECT COUNT(*) AS total FROM user_player_cards WHERE user_id=?',
     [userId]
@@ -57,6 +56,19 @@ async function buildPage(userId, page, username = 'Your Club', ownerDiscordId = 
      LIMIT ? OFFSET ?`,
     [userId, PAGE_SIZE, offset]
   );
+
+  // Refresh the rolling 24-hour demand window only for players on this page.
+  const pagePlayerIds = [...new Set(rows.map(row => String(row.player_id)))];
+  if (pagePlayerIds.length) {
+    await refreshMarketWindows(getPool(), pagePlayerIds);
+    const placeholders = pagePlayerIds.map(() => '?').join(',');
+    const stockRows = await getPool().query(
+      `SELECT player_id,stock,base_stock,purchases_24h,sales_24h FROM market_stock WHERE player_id IN (${placeholders})`,
+      pagePlayerIds
+    );
+    const stockByPlayer = new Map(stockRows.map(stock => [String(stock.player_id), stock]));
+    for (const row of rows) Object.assign(row, stockByPlayer.get(String(row.player_id)) || {});
+  }
 
   const viewRows = rows.map(row => {
     const player = safeJson(row.raw_json, {});

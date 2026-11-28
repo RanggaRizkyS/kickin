@@ -1,6 +1,8 @@
 const { getPool, makePublicId } = require('../db');
 const config = require('../config');
-const { FORMATIONS, safeJson, uuid } = require('../utils/football');
+const { FORMATIONS, uuid } = require('../utils/football');
+const { selectStarterPlayersFromCatalog } = require('./starter-selection');
+const { getGameCatalog } = require('./catalog-cache');
 
 function buildCurrentStats(player) {
   return {
@@ -34,32 +36,8 @@ async function getUserById(userId) {
 }
 
 async function selectStarterPlayers(conn) {
-  const rows = await conn.query('SELECT raw_json FROM players_catalog ORDER BY overall ASC,name ASC');
-  const catalog = rows.map(row => safeJson(row.raw_json, {}));
-  const positions = FORMATIONS['4-3-3'];
-  const used = new Set();
-  const selected = [];
-  for (const slot of positions) {
-    const preferred = slot.label;
-    const candidates = catalog.filter(player => !used.has(player.id));
-    candidates.sort((a, b) => {
-      const aGk = a.stats?.type === 'goalkeeper';
-      const bGk = b.stats?.type === 'goalkeeper';
-      const aRating = Number(a.position_ratings?.[preferred] || a.overall);
-      const bRating = Number(b.position_ratings?.[preferred] || b.overall);
-      const aValid = preferred === 'GK' ? aGk : !aGk;
-      const bValid = preferred === 'GK' ? bGk : !bGk;
-      if (aValid !== bValid) return aValid ? -1 : 1;
-      // Pick the strongest position fit for starter teams. The previous
-      // ascending sort accidentally handed every new user the weakest cards.
-      return bRating - aRating || Number(b.overall) - Number(a.overall);
-    });
-    const player = candidates[0];
-    if (!player) throw new Error(`No suitable starter was found for position ${preferred}.`);
-    used.add(player.id);
-    selected.push({ slotKey: slot.key, player });
-  }
-  return selected;
+  const catalog = await getGameCatalog(conn);
+  return selectStarterPlayersFromCatalog(catalog);
 }
 
 async function createPlayerCard(conn, userId, player, source, seasonId) {

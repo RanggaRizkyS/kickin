@@ -50,37 +50,60 @@ async function getSquadSnapshot(userId, conn = getPool()) {
     };
   });
 
+  const positionCategory = position => {
+    if (position === 'GK') return 'GK';
+    if (['LB','RB','CB','LWB','RWB'].includes(position)) return 'DEF';
+    if (['CDM','CM','CAM','LM','RM'].includes(position)) return 'MID';
+    return 'ATT';
+  };
   const players = basePlayers.map((entry, index) => {
     const peers = basePlayers.filter((_, peerIndex) => peerIndex !== index);
-    const countMatching = predicate => peers.filter(peer => predicate(entry.player, peer.player)).length;
-    const clubCount = countMatching((a, b) => a.club?.id && a.club.id === b.club?.id);
-    const nationalityCount = countMatching((a, b) => a.nationality?.code && a.nationality.code === b.nationality?.code);
-    const leagueCount = countMatching((a, b) => a.club?.league && a.club.league === b.club?.league);
-    const club = (clubCount / 10) * config.chemistry.club;
-    const nationality = (nationalityCount / 10) * config.chemistry.nationality;
-    const league = (leagueCount / 10) * config.chemistry.league;
-    const position = isPositionCompatible(entry.player, entry.slotPosition) ? config.chemistry.position : 0;
+    const same = (a, b, key) => Boolean(a?.[key] && b?.[key] && String(a[key]).toLowerCase() === String(b[key]).toLowerCase());
+    const clubLinks = peers.filter(peer => same(entry.player.club, peer.player.club, 'id') || same(entry.player.club, peer.player.club, 'name')).length;
+    const nationalityLinks = peers.filter(peer => same(entry.player.nationality, peer.player.nationality, 'country') || same(entry.player.nationality, peer.player.nationality, 'code')).length;
+    const leagueLinks = peers.filter(peer => same(entry.player.club, peer.player.club, 'league')).length;
+    const baseLinks = clubLinks + nationalityLinks + leagueLinks;
     const pairTotal = peers.reduce((sum, peer) => sum + (pairCounts.get(pairKey(entry.cardInstanceId, peer.cardInstanceId)) || 0), 0);
-    const pairAverage = peers.length ? pairTotal / peers.length : 0;
-    const pairChemistry = clamp(pairAverage * config.chemistry.pairFactor, 0, config.chemistry.pairMax);
-    const squadFamiliarity = clamp(Number(squad.squad_matches) * config.chemistry.squadFactor, 0, config.chemistry.squadMax);
-    const chemistry = clamp(club + nationality + league + position + pairChemistry + squadFamiliarity, 0, 100);
+    // User-selected familiarity layer: repeated pair appearances and squad matches
+    // progressively add chemistry links, while the public Soccer Guru link rules
+    // remain the base calculation.
+    const pairFamiliarityLinks = Math.min(3, Math.floor(pairTotal / 3));
+    const squadFamiliarityLinks = Math.min(2, Math.floor(Number(squad.squad_matches) / 10));
+    const positionCompatible = isPositionCompatible(entry.player, entry.slotPosition);
+    const sameCategory = positionCategory(entry.player.positions?.primary) === positionCategory(entry.slotPosition);
+    const effectiveLinks = baseLinks + pairFamiliarityLinks + squadFamiliarityLinks;
+
+    let chemistryGrade = 'red';
+    if (!sameCategory) chemistryGrade = 'red';
+    else if (positionCompatible && effectiveLinks >= 5) chemistryGrade = 'green';
+    else if (effectiveLinks >= 5) chemistryGrade = 'yellow';
+    else if (positionCompatible && effectiveLinks >= 3) chemistryGrade = 'yellow';
+
+    const chemistryPoints = chemistryGrade === 'green' ? 7 : chemistryGrade === 'yellow' ? 5 : 0;
+    const individualChemistry = chemistryGrade === 'green' ? 100 : chemistryGrade === 'yellow' ? 65 : 0;
     return {
       ...entry,
-      chemistry: round(chemistry, 2),
+      chemistry: individualChemistry,
+      chemistryGrade,
+      chemistryPoints,
       chemistryDetails: {
-        club: round(club, 2), nationality: round(nationality, 2), league: round(league, 2),
-        position: round(position, 2), pair: round(pairChemistry, 2), squad: round(squadFamiliarity, 2)
+        clubLinks, nationalityLinks, leagueLinks, baseLinks,
+        pairFamiliarityLinks, squadFamiliarityLinks, effectiveLinks,
+        positionCompatible, sameCategory
       }
     };
   });
   const complete = players.length === 11 && slots.every(slot => players.some(player => player.slotKey === slot.key));
   const teamOvr = complete ? round(players.reduce((sum, player) => sum + player.currentOvr, 0) / 11, 3) : 0;
-  const teamChemistry = complete ? round(players.reduce((sum, player) => sum + player.chemistry, 0) / 11, 3) : 0;
+  const chemistryPoints = complete ? players.reduce((sum, player) => sum + Number(player.chemistryPoints || 0), 0) : 0;
+  const teamChemistryGrade = chemistryPoints >= 62 ? 'green' : chemistryPoints >= 49 ? 'yellow' : 'red';
+  const teamChemistry = complete ? round((chemistryPoints / 77) * 100, 3) : 0;
+  const teamChemistryMultiplier = teamChemistryGrade === 'green' ? 1 : teamChemistryGrade === 'yellow' ? 0.95 : 0.88;
+  for (const player of players) player.teamChemistryMultiplier = teamChemistryMultiplier;
   const teamStrength = complete ? round((teamOvr + teamChemistry) / 2, 3) : 0;
   return {
     userId: Number(userId), formation, squadMatches: Number(squad.squad_matches), players,
-    teamOvr, teamChemistry, teamStrength, complete,
+    teamOvr, teamChemistry, chemistryPoints, teamChemistryGrade, teamChemistryMultiplier, teamStrength, complete,
     missingSlots: slots.filter(slot => !players.some(player => player.slotKey === slot.key)).map(slot => slot.key)
   };
 }

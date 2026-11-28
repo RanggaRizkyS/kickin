@@ -106,48 +106,76 @@ function makeRatingTargets(targetMean, rng) {
   return shuffle([...stars, ...remaining], rng);
 }
 
-function buildCandidateLineup(slots, catalog, targetRatings, rng) {
+function buildPositionIndex(catalog) {
+  const labels = new Set(Object.values(FORMATIONS).flat().map(slot => slot.label));
+  const index = new Map();
+  for (const label of labels) {
+    const goalkeeperSlot = label === 'GK';
+    const eligible = catalog
+      .filter(player => ((player.stats?.type === 'goalkeeper') === goalkeeperSlot) && positionRating(player, label) >= 60)
+      .map(player => ({ player, rating: positionRating(player, label) }))
+      .sort((a, b) => a.rating - b.rating);
+    index.set(label, eligible);
+  }
+  return index;
+}
+
+function lowerBoundByRating(values, target) {
+  let low = 0;
+  let high = values.length;
+  while (low < high) {
+    const mid = (low + high) >> 1;
+    if (values[mid].rating < target) low = mid + 1;
+    else high = mid;
+  }
+  return low;
+}
+
+function nearestAvailable(indexed, desired, used, rng, windowSize = 36) {
+  if (!indexed?.length) return [];
+  const pivot = lowerBoundByRating(indexed, desired);
+  const left = Math.max(0, pivot - windowSize);
+  const right = Math.min(indexed.length, pivot + windowSize);
+  const nearby = [];
+  for (let cursor = left; cursor < right; cursor += 1) {
+    const entry = indexed[cursor];
+    if (used.has(entry.player.id)) continue;
+    nearby.push({
+      ...entry,
+      score: Math.abs(entry.rating - desired) + rng() * 2.5
+    });
+  }
+  nearby.sort((a, b) => a.score - b.score);
+  return nearby.slice(0, 9);
+}
+
+function buildCandidateLineup(slots, positionIndex, targetRatings, rng) {
   const used = new Set();
   const players = [];
   const slotOrder = shuffle(slots.map((slot, index) => ({ slot, index })), rng);
 
   for (const { slot, index } of slotOrder) {
-    const isGoalkeeper = slot.label === 'GK';
     const desired = targetRatings[index];
-    const candidates = catalog.filter(player =>
-      !used.has(player.id) &&
-      ((player.stats?.type === 'goalkeeper') === isGoalkeeper) &&
-      positionRating(player, slot.label) >= 60
-    );
-
-    if (!candidates.length) return null;
-
-    const ranked = candidates
-      .map(player => ({
-        player,
-        rating: positionRating(player, slot.label),
-        score: Math.abs(positionRating(player, slot.label) - desired) + rng() * 3.5
-      }))
-      .sort((a, b) => a.score - b.score);
-
-    // Pick among the closest few rather than always taking the same best card.
-    const shortlist = ranked.slice(0, Math.min(9, ranked.length));
+    const shortlist = nearestAvailable(positionIndex.get(slot.label), desired, used, rng);
+    if (!shortlist.length) return null;
     const selected = shortlist[randomInt(0, shortlist.length - 1, rng)];
-    used.add(selected.player.id);
+    const player = selected.player;
+    used.add(player.id);
     players.push({
-      cardInstanceId: `BOT-${selected.player.id}-${slot.key}`,
-      playerId: selected.player.id,
+      cardInstanceId: `BOT-${player.id}-${slot.key}`,
+      playerId: player.id,
       slotKey: slot.key,
       slotPosition: slot.label,
-      player: selected.player,
+      player,
       level: 1,
       xp: 0,
-      currentStats: selected.player.stats?.type === 'goalkeeper'
-        ? (selected.player.stats?.goalkeeper || {})
-        : (selected.player.stats?.main || {}),
+      currentStats: player.stats?.type === 'goalkeeper'
+        ? (player.stats?.goalkeeper || {})
+        : (player.stats?.main || {}),
       currentOvr: selected.rating,
-      shirtNumber: Number(selected.player.shirt_number || index + 1),
+      shirtNumber: Number(player.shirt_number || index + 1),
       chemistry: 0,
+      teamChemistryMultiplier: 1,
       chemistryDetails: { generated: true }
     });
   }
@@ -163,10 +191,14 @@ function buildBotSquadFromCatalog(targetTeam, catalog, options = {}) {
 
   const rng = options.rng || Math.random;
   const userStrength = Number(targetTeam.teamStrength ?? targetTeam ?? 50);
-  const desiredStrength = clamp(userStrength + (randomInt(-200, 200, rng) / 100), 30, 97.5);
+  // Classic CPU should be beatable by a stronger squad, not silently mirror it.
+  // Keep a 4-6 point Team Strength gap so the user has a real but not guaranteed edge.
+  const strengthGap = randomInt(400, 600, rng) / 100;
+  const desiredStrength = clamp(userStrength - strengthGap, 30, 97.5);
   const userChemistry = Number(targetTeam.teamChemistry ?? 0);
   const initialChemistry = clamp(userChemistry + randomInt(-2, 2, rng), 0, 100);
   const desiredOvr = clamp((desiredStrength * 2) - initialChemistry, 60, 95);
+  const positionIndex = options.positionIndex || buildPositionIndex(catalog);
   const manager = options.botName
     ? { ...botManagerNameForStrength(userStrength, rng), name: options.botName }
     : botManagerNameForStrength(userStrength, rng);
@@ -179,7 +211,7 @@ function buildBotSquadFromCatalog(targetTeam, catalog, options = {}) {
     const formation = formations[randomInt(0, formations.length - 1, rng)];
     const slots = FORMATIONS[formation];
     const targets = makeRatingTargets(desiredOvr, rng);
-    const players = buildCandidateLineup(slots, catalog, targets, rng);
+    const players = buildCandidateLineup(slots, positionIndex, targets, rng);
     if (!players) continue;
 
     const teamOvr = round(players.reduce((sum, player) => sum + player.currentOvr, 0) / 11, 3);
@@ -203,7 +235,7 @@ function buildBotSquadFromCatalog(targetTeam, catalog, options = {}) {
   // tune the bot's generated familiarity to keep Team Strength within range.
   let botChemistry = initialChemistry;
   let teamStrength = round((best.teamOvr + botChemistry) / 2, 3);
-  if (Math.abs(teamStrength - userStrength) > 2) {
+  if (Math.abs(teamStrength - desiredStrength) > 0.75) {
     const requiredChemistry = clamp((desiredStrength * 2) - best.teamOvr, 0, 100);
     botChemistry = round(requiredChemistry, 2);
     teamStrength = round((best.teamOvr + botChemistry) / 2, 3);
@@ -220,6 +252,8 @@ function buildBotSquadFromCatalog(targetTeam, catalog, options = {}) {
     teamOvr: best.teamOvr,
     teamChemistry: botChemistry,
     teamStrength,
+    targetStrength: desiredStrength,
+    strengthGap: round(userStrength - teamStrength, 2),
     complete: true,
     isBot: true,
     botPersonality: personality,
@@ -232,6 +266,7 @@ function buildBotSquadFromCatalog(targetTeam, catalog, options = {}) {
 module.exports = {
   BOT_NAME_RANGES,
   ALL_BOT_NAMES,
+  buildPositionIndex,
   botManagerNameForStrength,
   buildBotSquadFromCatalog
 };

@@ -1,5 +1,7 @@
 CREATE TABLE IF NOT EXISTS players_catalog (
   player_id VARCHAR(32) PRIMARY KEY,
+  catalog_source VARCHAR(24) NOT NULL DEFAULT 'legacy',
+  source_player_id VARCHAR(64) NULL,
   name VARCHAR(120) NOT NULL,
   primary_position VARCHAR(8) NOT NULL,
   overall TINYINT UNSIGNED NOT NULL,
@@ -13,11 +15,61 @@ CREATE TABLE IF NOT EXISTS players_catalog (
   club_json LONGTEXT NOT NULL,
   raw_json LONGTEXT NOT NULL,
   market_value_eur BIGINT NOT NULL DEFAULT 0,
+  age TINYINT UNSIGNED NULL,
+  height_cm SMALLINT UNSIGNED NULL,
+  weight_kg SMALLINT UNSIGNED NULL,
+  preferred_foot VARCHAR(12) NULL,
+  weak_foot TINYINT UNSIGNED NULL,
+  skill_moves TINYINT UNSIGNED NULL,
+  league_name VARCHAR(120) NULL,
+  player_face_url VARCHAR(512) NULL,
   rarity ENUM('bronze','silver','gold') NOT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_catalog_position (primary_position),
   INDEX idx_catalog_overall (overall),
-  INDEX idx_catalog_name (name)
+  INDEX idx_catalog_name (name),
+  INDEX idx_catalog_source_ovr (catalog_source,overall),
+  UNIQUE KEY uq_catalog_source_player (catalog_source,source_player_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS player_card_assets (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  game_version VARCHAR(8) NOT NULL DEFAULT 'FC26',
+  player_id VARCHAR(32) NOT NULL,
+  ea_item_id VARCHAR(32) NULL,
+  provider_card_id VARCHAR(64) NULL,
+  provider VARCHAR(32) NULL,
+  source_image_url VARCHAR(1000) NULL,
+  cache_path VARCHAR(512) NULL,
+  image_sha256 CHAR(64) NULL,
+  status ENUM('ready','missing','failed') NOT NULL DEFAULT 'missing',
+  last_checked_at DATETIME(3) NULL,
+  last_checked_at_ms BIGINT UNSIGNED NULL,
+  last_error VARCHAR(500) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_player_card_asset (game_version,player_id),
+  INDEX idx_card_asset_status_checked (status,last_checked_at),
+  CONSTRAINT fk_card_asset_catalog FOREIGN KEY (player_id) REFERENCES players_catalog(player_id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS player_portrait_assets (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  game_version VARCHAR(8) NOT NULL DEFAULT 'FC26',
+  player_id VARCHAR(32) NOT NULL,
+  source_player_id VARCHAR(64) NULL,
+  source_image_url VARCHAR(512) NOT NULL,
+  cache_path VARCHAR(512) NULL,
+  image_sha256 CHAR(64) NULL,
+  status ENUM('ready','missing','failed') NOT NULL DEFAULT 'missing',
+  last_checked_at DATETIME(3) NULL,
+  last_checked_at_ms BIGINT UNSIGNED NULL,
+  last_error VARCHAR(500) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_player_portrait_asset (game_version,player_id),
+  INDEX idx_portrait_asset_status_checked (status,last_checked_at),
+  CONSTRAINT fk_portrait_asset_catalog FOREIGN KEY (player_id) REFERENCES players_catalog(player_id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS users (

@@ -71,15 +71,17 @@ function growAttributes(stats, position, contribution = {}, isKeeper = false) {
   }
   if (!isKeeper) {
     const detailMap = ['ST', 'CF'].includes(position)
-      ? { finishing: 0.42, attacking_positioning: 0.32, shot_power: 0.22, volleys: 0.16, composure: 0.14 }
+      ? { attacking_finishing: 0.42, attacking_positioning: 0.32, power_shot_power: 0.22, attacking_volleys: 0.16, mentality_composure: 0.14 }
       : ['LW', 'RW', 'LM', 'RM'].includes(position)
-        ? { acceleration: 0.24, sprint_speed: 0.25, dribbling: 0.36, ball_control: 0.28, crossing: 0.16 }
+        ? { movement_acceleration: 0.24, movement_sprint_speed: 0.25, skill_dribbling: 0.36, skill_ball_control: 0.28, attacking_crossing: 0.16 }
         : ['CAM', 'CM'].includes(position)
-          ? { vision: 0.30, short_passing: 0.30, long_passing: 0.20, ball_control: 0.22, composure: 0.18 }
-          : { defensive_awareness: 0.34, standing_tackle: 0.32, sliding_tackle: 0.24, interceptions: 0.30, strength: 0.20 };
+          ? { mentality_vision: 0.30, skill_short_passing: 0.30, skill_long_passing: 0.20, skill_ball_control: 0.22, mentality_composure: 0.18 }
+          : { defending_marking: 0.34, defending_standing_tackle: 0.32, defending_sliding_tackle: 0.24, mentality_interceptions: 0.30, power_strength: 0.20 };
     for (const [key, amount] of Object.entries(detailMap)) {
       if (stats[key] === undefined) continue;
-      const extra = key === 'finishing' ? goalBonus : key === 'short_passing' ? assistBonus : (key.includes('tackle') || key === 'interceptions') ? defenseBonus : 0;
+      const extra = key === 'attacking_finishing' ? goalBonus
+        : key === 'skill_short_passing' ? assistBonus
+          : (key.includes('tackle') || key === 'mentality_interceptions') ? defenseBonus : 0;
       stats[key] = clamp(round(Number(stats[key]) + amount + extra, 2), 1, 99);
     }
   }

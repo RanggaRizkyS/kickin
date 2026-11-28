@@ -81,8 +81,7 @@ module.exports = {
         { name: 'Position', value: `**${result.player.positions?.primary || '-'}**`, inline: true },
         { name: 'Rarity', value: `**${rarity.toUpperCase()}**`, inline: true },
         { name: 'Gold pity', value: `**${formatNumber(result.pity)} / ${formatNumber(result.pityGuarantee)}**`, inline: true }
-      )
-      .setImage('attachment://claimed-player.png');
+      );
 
     await interaction.editReply({ embeds: [embed], files: [file], components: [] });
   }

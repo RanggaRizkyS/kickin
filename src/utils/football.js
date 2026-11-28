@@ -36,10 +36,41 @@ function safeJson(value, fallback = {}) {
   try { return JSON.parse(value); } catch { return fallback; }
 }
 function rarityFromOvr(ovr) { return Number(ovr) >= 81 ? 'gold' : Number(ovr) >= 70 ? 'silver' : 'bronze'; }
+// Public Soccer Guru player-price reference. The published chart prices a card
+// from OVR and the sum of its six displayed base stats (Effective Stats).
+// Joko's own supply/demand multipliers are applied later by market.js.
+const SOCCER_GURU_OVR_BASE = {
+  70:1500,71:1800,72:2100,73:2400,74:2700,75:3000,76:4650,77:6300,78:7950,79:9600,
+  80:11250,81:31250,82:51250,83:71250,84:91250,85:112500,86:180000,87:247500,88:315000,89:382500,
+  90:450000,91:660000,92:870000,93:1080000,94:1290000,95:1500000,96:1800000,97:2100000,98:2400000,99:2700000
+};
+const SOCCER_GURU_EFFECTIVE_STAT_BANDS = [
+  { max:300, multiplier:1.00 },
+  { max:399, multiplier:1.20 },
+  { max:449, multiplier:1.30 },
+  { max:474, multiplier:1.40 },
+  { max:499, multiplier:1.50 },
+  { max:524, multiplier:1.60 },
+  { max:549, multiplier:1.70 },
+  { max:594, multiplier:1.85 },
+  { max:Infinity, multiplier:1.85 }
+];
+function effectiveStatsTotal(player) {
+  const main = player?.stats?.main || player?.main_stats || {};
+  return ['PAC','SHO','PAS','DRI','DEF','PHY'].reduce((sum, key) => {
+    const value = Number(main[key] ?? main[key.toLowerCase()] ?? 0);
+    return sum + (Number.isFinite(value) ? value : 0);
+  }, 0);
+}
 function basePrice(player) {
-  const ovr = Number(player.overall || 60);
-  const mv = Number(player.market_value_eur || 0);
-  return Math.round(350 + Math.pow(Math.max(0, ovr - 60), 2) * 22 + (mv > 0 ? Math.log10(mv + 1) * 90 : 0));
+  const ovr = clamp(Math.round(Number(player?.overall || 60)), 1, 99);
+  const effectiveStats = effectiveStatsTotal(player);
+  const band = SOCCER_GURU_EFFECTIVE_STAT_BANDS.find(item => effectiveStats <= item.max) || SOCCER_GURU_EFFECTIVE_STAT_BANDS.at(-1);
+  const publishedBase = SOCCER_GURU_OVR_BASE[ovr];
+  // The public price sheet starts at OVR 70. Lower-rated EAFC players use a
+  // conservative Joko fallback rather than pretending the reference publishes them.
+  const base = publishedBase ?? Math.max(150, Math.round(1500 * Math.pow(0.88, Math.max(0, 70 - ovr))));
+  return Math.round(base * band.multiplier);
 }
 function isPositionCompatible(player, position) {
   return player.positions?.primary === position || (player.positions?.secondary || []).includes(position) || Number(player.position_ratings?.[position] || 0) >= 72;
@@ -47,10 +78,12 @@ function isPositionCompatible(player, position) {
 function estimatedOverall(card, player, position) {
   const base = Number(player.position_ratings?.[position] || player.overall || 60);
   const stats = safeJson(card.current_stats_json || card.currentStats, player.stats?.main || {});
-  const values = Object.values(stats).filter(v => Number.isFinite(Number(v))).map(Number);
-  const mean = values.length ? values.reduce((a, b) => a + b, 0) / values.length : 70;
-  const levelBonus = Math.floor((Number(card.level || 1) - 1) * 0.18);
-  const growthBonus = Math.floor(Math.max(0, mean - 70) * 0.08);
+  const keys = ['PAC','SHO','PAS','DRI','DEF','PHY'];
+  const baseMain = player.stats?.main || {};
+  const currentMean = keys.reduce((sum, key) => sum + Number(stats[key] ?? stats[key.toLowerCase()] ?? baseMain[key] ?? 60), 0) / keys.length;
+  const baseMean = keys.reduce((sum, key) => sum + Number(baseMain[key] ?? baseMain[key.toLowerCase()] ?? 60), 0) / keys.length;
+  const levelBonus = Math.floor((Number(card.level || 1) - 1) * 0.12);
+  const growthBonus = Math.floor(Math.max(0, currentMean - baseMean) * 0.30);
   return clamp(Math.round(base + levelBonus + growthBonus), 40, Number(player.potential || 99));
 }
 function teamStrength(teamOvr, chemistry) { return round((Number(teamOvr) + Number(chemistry)) / 2, 3); }
@@ -63,4 +96,4 @@ function xpRequired(level) { return Math.round(config.progression.playerXpBase +
 function accountXpRequired(level) { return 120 + Number(level) * 95; }
 function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
-module.exports = { FORMATIONS, uuid, clamp, round, safeJson, rarityFromOvr, basePrice, isPositionCompatible, estimatedOverall, teamStrength, randomInt, pairKey, formatCredits, formatStrength, positionForSlot, xpRequired, accountXpRequired, sleep };
+module.exports = { FORMATIONS, uuid, clamp, round, safeJson, rarityFromOvr, effectiveStatsTotal, basePrice, isPositionCompatible, estimatedOverall, teamStrength, randomInt, pairKey, formatCredits, formatStrength, positionForSlot, xpRequired, accountXpRequired, sleep, SOCCER_GURU_OVR_BASE, SOCCER_GURU_EFFECTIVE_STAT_BANDS };

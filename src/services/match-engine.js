@@ -1,5 +1,41 @@
 const { clamp, round } = require('../utils/football');
 
+// Joko Soccer match pacing. Calibrated with deterministic Monte Carlo runs so
+// evenly matched squads create regular chances without forcing a goal every match.
+// Balanced 11v11 test fixtures average roughly 6 shots and 1.4-1.6 goals per side.
+const MATCH_BALANCE = Object.freeze({
+  penaltyBase: 0.006,
+  penaltyAttackScale: 0.00005,
+  penaltyMin: 0.003,
+  penaltyMax: 0.014,
+  defendBase: 0.135,
+  defendAttributeScale: 0.0007,
+  defendMin: 0.08,
+  defendMax: 0.30,
+  shotBase: 0.29,
+  shotAttributeScale: 0.0012,
+  shotAgeScale: 0.018,
+  shotStrengthScale: 0.0020,
+  shotMin: 0.16,
+  shotMax: 0.52,
+  onTargetBase: 0.38,
+  onTargetFinishingDivisor: 250,
+  onTargetPowerDivisor: 650,
+  onTargetMin: 0.50,
+  onTargetMax: 0.90,
+  goalBase: 0.36,
+  goalFinishingScale: 0.0026,
+  goalPowerScale: 0.0010,
+  goalKeeperReflexScale: 0.0016,
+  goalKeeperHandlingScale: 0.0008,
+  goalStrengthScale: 0.0040,
+  goalMin: 0.17,
+  goalMax: 0.60,
+  buildUpBase: 0.52,
+  buildUpMin: 0.35,
+  buildUpMax: 0.66
+});
+
 function seededRandom(seed) {
   let a = Number(seed) >>> 0;
   return function random() {
@@ -17,20 +53,61 @@ function average(values, fallback = 65) {
     : fallback;
 }
 
+const DETAIL_ATTRIBUTE_ALIASES = {
+  finishing: ['attacking_finishing'],
+  attacking_positioning: ['attacking_positioning'],
+  shot_power: ['power_shot_power'],
+  volleys: ['attacking_volleys'],
+  composure: ['mentality_composure'],
+  acceleration: ['movement_acceleration'],
+  sprint_speed: ['movement_sprint_speed'],
+  dribbling: ['skill_dribbling'],
+  ball_control: ['skill_ball_control'],
+  crossing: ['attacking_crossing'],
+  vision: ['mentality_vision'],
+  short_passing: ['skill_short_passing'],
+  long_passing: ['skill_long_passing'],
+  defensive_awareness: ['defending_marking'],
+  standing_tackle: ['defending_standing_tackle'],
+  sliding_tackle: ['defending_sliding_tackle'],
+  interceptions: ['mentality_interceptions'],
+  strength: ['power_strength'],
+  reflexes: ['goalkeeping_reflexes'],
+  handling: ['goalkeeping_handling'],
+  diving: ['goalkeeping_diving'],
+  positioning: ['goalkeeping_positioning'],
+  kicking: ['goalkeeping_kicking']
+};
+
+function readAttribute(source, key) {
+  if (!source) return undefined;
+  const candidates = [key, key.toUpperCase(), ...(DETAIL_ATTRIBUTE_ALIASES[key] || [])];
+  for (const candidate of candidates) {
+    if (source[candidate] !== undefined && source[candidate] !== null) return source[candidate];
+  }
+  return undefined;
+}
+
+function chemistryMultiplier(player) {
+  // Public Soccer Guru chemistry behaviour: a green team retains full player
+  // performance; a non-green team applies the team-level penalty. Pair colours
+  // remain visible in the squad but do not independently penalize a green team.
+  const explicit = Number(player.teamChemistryMultiplier ?? player.player?.teamChemistryMultiplier);
+  return Number.isFinite(explicit) && explicit > 0 ? clamp(explicit, 0.80, 1.0) : 1.0;
+}
+
 function getStat(player, key, fallback = 65) {
   const current = player.currentStats || {};
   const raw = player.player?.stats?.outfield || player.player?.stats?.goalkeeper || {};
-  const value = current[key] ?? current[key.toUpperCase()] ?? raw[key] ?? raw[key.toUpperCase()] ?? fallback;
-  const boost = 1 + (Number(player.chemistry || 0) / 100) * 0.10;
-  return clamp(Number(value) * boost, 1, 99);
+  const value = readAttribute(current, key) ?? readAttribute(raw, key) ?? fallback;
+  return clamp(Number(value) * chemistryMultiplier(player), 1, 99);
 }
 
 function getMainStat(player, key, fallback = 65) {
   const current = player.currentStats || {};
   const main = player.player?.stats?.main || {};
-  const value = current[key] ?? current[key.toUpperCase()] ?? main[key] ?? main[key.toUpperCase()] ?? fallback;
-  const boost = 1 + (Number(player.chemistry || 0) / 100) * 0.10;
-  return clamp(Number(value) * boost, 1, 99);
+  const value = readAttribute(current, key) ?? readAttribute(main, key) ?? fallback;
+  return clamp(Number(value) * chemistryMultiplier(player), 1, 99);
 }
 
 function getTeamProfile(team) {
@@ -248,7 +325,7 @@ function generateMatch(home, away, seed = Date.now()) {
 
   const controlProbability = clamp(
     0.5 + (profiles.home.midfield - profiles.away.midfield) * 0.0021 +
-      (profiles.home.strength - profiles.away.strength) * 0.0011,
+      (profiles.home.strength - profiles.away.strength) * 0.0028,
     0.33,
     0.67
   );
@@ -283,7 +360,7 @@ function generateMatch(home, away, seed = Date.now()) {
       // A penalty can only follow an established attacking sequence and is
       // resolved on the next simulated minute. No unrelated event can jump in.
       const penaltyChance = attackAge >= 1
-        ? clamp(0.012 + (attackProfile.attack - defenceProfile.defense) * 0.00008, 0.006, 0.025)
+        ? clamp(MATCH_BALANCE.penaltyBase + (attackProfile.attack - defenceProfile.defense) * MATCH_BALANCE.penaltyAttackScale, MATCH_BALANCE.penaltyMin, MATCH_BALANCE.penaltyMax)
         : 0;
 
       if (minute < 90 && rng() < penaltyChance) {
@@ -333,10 +410,10 @@ function generateMatch(home, away, seed = Date.now()) {
           if (activeAttack.remaining <= 0) activeAttack = null;
         } else {
           const defendChance = clamp(
-            0.23 + (defenceProfile.defense - attackProfile.attack) * 0.0012 + redPenalty +
+            MATCH_BALANCE.defendBase + (defenceProfile.defense - attackProfile.attack) * MATCH_BALANCE.defendAttributeScale + redPenalty +
               botTendency(defendingTeam, 'defend'),
-            0.14,
-            0.48
+            MATCH_BALANCE.defendMin,
+            MATCH_BALANCE.defendMax
           );
           if (rng() < defendChance) {
             stats[defendingSide].tackles += 1;
@@ -360,10 +437,10 @@ function generateMatch(home, away, seed = Date.now()) {
             currentSide = defendingSide;
           } else {
             const shotChance = clamp(
-              0.105 + (attackProfile.attack - defenceProfile.defense) * 0.0015 + attackAge * 0.012 - redPenalty +
+              MATCH_BALANCE.shotBase + (attackProfile.attack - defenceProfile.defense) * MATCH_BALANCE.shotAttributeScale + attackAge * MATCH_BALANCE.shotAgeScale + (attackProfile.strength - defenceProfile.strength) * MATCH_BALANCE.shotStrengthScale - redPenalty +
                 botTendency(attackingTeam, 'shot'),
-              0.035,
-              0.24
+              MATCH_BALANCE.shotMin,
+              MATCH_BALANCE.shotMax
             );
             if (rng() < shotChance) {
               stats[attackingSide].shots += 1;
@@ -371,15 +448,16 @@ function generateMatch(home, away, seed = Date.now()) {
               if (contribution) contribution.shots += 1;
               const finishing = getStat(attacker, 'finishing', getMainStat(attacker, 'SHO'));
               const shotPower = getStat(attacker, 'shot_power', getMainStat(attacker, 'SHO'));
-              const onTarget = rng() < clamp(0.27 + finishing / 240 + shotPower / 600, 0.34, 0.84);
+              const onTarget = rng() < clamp(MATCH_BALANCE.onTargetBase + finishing / MATCH_BALANCE.onTargetFinishingDivisor + shotPower / MATCH_BALANCE.onTargetPowerDivisor, MATCH_BALANCE.onTargetMin, MATCH_BALANCE.onTargetMax);
               const goalkeeper = defendingTeam.players.find(player => player.slotPosition === 'GK');
               const reflexes = goalkeeper ? getStat(goalkeeper, 'reflexes', 70) : 65;
               const handling = goalkeeper ? getStat(goalkeeper, 'handling', 70) : 65;
               const goalChance = clamp(
-                0.20 + (finishing - 70) * 0.003 + (shotPower - 70) * 0.0012 -
-                  (reflexes - 70) * 0.0022 - (handling - 70) * 0.0011 - redPenalty,
-                0.035,
-                0.42
+                MATCH_BALANCE.goalBase + (finishing - 70) * MATCH_BALANCE.goalFinishingScale + (shotPower - 70) * MATCH_BALANCE.goalPowerScale -
+                  (reflexes - 70) * MATCH_BALANCE.goalKeeperReflexScale - (handling - 70) * MATCH_BALANCE.goalKeeperHandlingScale +
+                  (attackProfile.strength - defenceProfile.strength) * MATCH_BALANCE.goalStrengthScale - redPenalty,
+                MATCH_BALANCE.goalMin,
+                MATCH_BALANCE.goalMax
               );
 
               if (onTarget) {
@@ -431,7 +509,7 @@ function generateMatch(home, away, seed = Date.now()) {
       possessionSide = currentSide;
 
       const buildUpChance = minute < 90
-        ? clamp(0.27 + botTendency(teams[currentSide], 'buildUp'), 0.12, 0.40)
+        ? clamp(MATCH_BALANCE.buildUpBase + botTendency(teams[currentSide], 'buildUp'), MATCH_BALANCE.buildUpMin, MATCH_BALANCE.buildUpMax)
         : 0;
       if (rng() < buildUpChance) {
         const team = teams[currentSide];

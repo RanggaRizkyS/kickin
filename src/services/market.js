@@ -4,6 +4,9 @@ const { claimElapsedMs, claimStatusFromRow: buildClaimStatus } = require('../uti
 const { safeJson, basePrice, clamp, uuid, estimatedOverall, rarityFromOvr } = require('../utils/football');
 const { addCredits } = require('./economy');
 const { createPlayerCard } = require('./users');
+const { buildRarityIndex, chooseWeightedPlayerId } = require('../utils/player-pool');
+
+let rarityIndexPromise = null;
 
 function calculateMarketPrice(player, stock, baseStock, buys24h, sales24h) {
   const base = basePrice(player);
@@ -14,11 +17,18 @@ function calculateMarketPrice(player, stock, baseStock, buys24h, sales24h) {
   return Math.max(50, Math.round(base * stockFactor * demandFactor));
 }
 
-async function refreshMarketWindows(conn = getPool()) {
+async function refreshMarketWindows(conn = getPool(), playerIds = null) {
+  const ids = Array.isArray(playerIds)
+    ? [...new Set(playerIds.map(String).filter(Boolean))]
+    : null;
+  if (ids && !ids.length) return;
+  const where = ids ? `WHERE player_id IN (${ids.map(() => '?').join(',')})` : '';
   await conn.query(`UPDATE market_stock SET
     purchases_24h=(SELECT COALESCE(SUM(quantity),0) FROM market_activity WHERE market_activity.player_id=market_stock.player_id AND action_type IN ('system_buy','user_trade','pack','claim') AND created_at>=NOW()-INTERVAL 24 HOUR),
-    sales_24h=(SELECT COALESCE(SUM(quantity),0) FROM market_activity WHERE market_activity.player_id=market_stock.player_id AND action_type IN ('system_sell','user_trade') AND created_at>=NOW()-INTERVAL 24 HOUR)`);
+    sales_24h=(SELECT COALESCE(SUM(quantity),0) FROM market_activity WHERE market_activity.player_id=market_stock.player_id AND action_type IN ('system_sell','user_trade') AND created_at>=NOW()-INTERVAL 24 HOUR)
+    ${where}`, ids || []);
 }
+
 
 async function refreshPlayerWindow(conn, playerId) {
   const rows = await conn.query(
@@ -33,18 +43,24 @@ async function refreshPlayerWindow(conn, playerId) {
 
 async function listSystemMarket({ search = '', position = '', rarity = '', sort = 'ovr_desc', limit = 10, offset = 0 } = {}) {
   const pool = getPool();
-  await refreshMarketWindows(pool);
   const clauses = ['1=1'];
   const params = [];
   if (search) { clauses.push('p.name LIKE ?'); params.push(`%${String(search).slice(0, 60)}%`); }
   if (position) { clauses.push('p.primary_position=?'); params.push(String(position).toUpperCase()); }
   if (['bronze', 'silver', 'gold'].includes(rarity)) { clauses.push('p.rarity=?'); params.push(rarity); }
   const rows = await pool.query(
-    `SELECT sml.listing_id,p.player_id,p.raw_json,p.rarity,p.overall,s.stock,s.base_stock,s.purchases_24h,s.sales_24h
+    `SELECT sml.listing_id,p.player_id,p.raw_json,p.rarity,p.overall,s.stock,s.base_stock,
+       COALESCE(a.purchases_24h,0) AS purchases_24h,COALESCE(a.sales_24h,0) AS sales_24h
      FROM players_catalog p
      JOIN system_market_listings sml ON sml.player_id=p.player_id
      JOIN market_stock s ON s.player_id=p.player_id
-     WHERE ${clauses.join(' AND ')} AND s.stock > 0`,
+     LEFT JOIN (
+       SELECT player_id,
+         SUM(CASE WHEN action_type IN ('system_buy','user_trade','pack','claim') THEN quantity ELSE 0 END) AS purchases_24h,
+         SUM(CASE WHEN action_type IN ('system_sell','user_trade') THEN quantity ELSE 0 END) AS sales_24h
+       FROM market_activity WHERE created_at>=NOW()-INTERVAL 24 HOUR GROUP BY player_id
+     ) a ON a.player_id=p.player_id
+     WHERE p.catalog_source='eafc26' AND ${clauses.join(' AND ')} AND s.stock > 0`,
     params
   );
   const players = rows.map(row => {
@@ -75,7 +91,7 @@ async function buySystemPlayer(userId, playerId) {
     await refreshPlayerWindow(conn, playerId);
     const rows = await conn.query(
       `SELECT p.*,s.stock,s.base_stock,s.purchases_24h,s.sales_24h FROM players_catalog p
-       JOIN market_stock s ON s.player_id=p.player_id WHERE p.player_id=? FOR UPDATE`, [playerId]
+       JOIN market_stock s ON s.player_id=p.player_id WHERE p.catalog_source='eafc26' AND p.player_id=? FOR UPDATE`, [playerId]
     );
     if (!rows.length) throw new Error('Player not found in the System Market.');
     const row = rows[0];
@@ -203,7 +219,6 @@ async function listUserListings({ search = '', rarity = '', limit = 10, offset =
 
 
 async function getSystemMarketItem(listingReference) {
-  await refreshMarketWindows();
   const rows = await getPool().query(
     `SELECT sml.listing_id,p.player_id,p.raw_json,p.rarity,p.overall,s.stock,s.base_stock,s.purchases_24h,s.sales_24h
      FROM system_market_listings sml
@@ -213,7 +228,14 @@ async function getSystemMarketItem(listingReference) {
     [listingReference, listingReference]
   );
   if (!rows.length) throw new Error('System Market listing not found.');
-  const row = rows[0];
+  await refreshPlayerWindow(getPool(), rows[0].player_id);
+  const freshRows = await getPool().query(
+    `SELECT sml.listing_id,p.player_id,p.raw_json,p.rarity,p.overall,s.stock,s.base_stock,s.purchases_24h,s.sales_24h
+     FROM system_market_listings sml JOIN players_catalog p ON p.player_id=sml.player_id
+     JOIN market_stock s ON s.player_id=p.player_id WHERE sml.listing_id=? OR p.player_id=? LIMIT 1`,
+    [listingReference, listingReference]
+  );
+  const row = freshRows[0] || rows[0];
   if (Number(row.stock) <= 0) throw new Error('This player is out of stock at the current listing. Check the market again.');
   const player = safeJson(row.raw_json, {});
   return {
@@ -334,20 +356,41 @@ async function cancelUserListing(userId, listingReference) {
   return { cancelled: true };
 }
 
-function chooseWeightedRarity(buckets, weights) {
-  const total = weights.reduce((sum, weight) => sum + Math.max(0, weight), 0);
-  let roll = Math.random() * Math.max(1, total);
-  const rarity = roll < weights[0] ? 'bronze' : (roll -= weights[0]) < weights[1] ? 'silver' : 'gold';
-  const candidates = buckets[rarity] || [];
-  return candidates.length ? candidates[Math.floor(Math.random() * candidates.length)]
-    : (buckets.bronze[0] || buckets.silver[0] || buckets.gold[0]);
+async function getRarityIndex(conn = getPool()) {
+  if (!rarityIndexPromise) {
+    rarityIndexPromise = (async () => {
+      const rows = await conn.query(
+        "SELECT player_id,rarity FROM players_catalog WHERE catalog_source='eafc26' ORDER BY player_id"
+      );
+      const index = buildRarityIndex(rows);
+      const total = index.bronze.length + index.silver.length + index.gold.length;
+      if (total < 10000) throw new Error(`EAFC26 player pool is incomplete (${total} records).`);
+      return index;
+    })().catch(error => {
+      rarityIndexPromise = null;
+      throw error;
+    });
+  }
+  return rarityIndexPromise;
 }
 
-async function getRarityBuckets(conn) {
-  const rows = await conn.query('SELECT raw_json,rarity FROM players_catalog ORDER BY player_id');
-  const buckets = { bronze: [], silver: [], gold: [] };
-  for (const row of rows) buckets[row.rarity].push(safeJson(row.raw_json, {}));
-  return buckets;
+async function getCatalogPlayersByIds(conn, playerIds) {
+  const ids = [...new Set((playerIds || []).map(String).filter(Boolean))];
+  if (!ids.length) return new Map();
+  const rows = await conn.query(
+    `SELECT player_id,raw_json,rarity FROM players_catalog
+     WHERE catalog_source='eafc26' AND player_id IN (${ids.map(() => '?').join(',')})`,
+    ids
+  );
+  return new Map(rows.map(row => [String(row.player_id), {
+    ...safeJson(row.raw_json, {}),
+    id: String(row.player_id),
+    rarity: row.rarity
+  }]));
+}
+
+function invalidateRarityIndex() {
+  rarityIndexPromise = null;
 }
 
 async function openPack(userId, packType = 'pro', quantity = 1) {
@@ -361,16 +404,21 @@ async function openPack(userId, packType = 'pro', quantity = 1) {
   try {
     await conn.beginTransaction();
     const balanceAfter = await addCredits(conn, userId, -totalPrice, 'player_pack_purchase', `pack-${packType}-${Date.now()}`);
-    const buckets = await getRarityBuckets(conn);
+    const rarityIndex = await getRarityIndex(conn);
     const season = await conn.query("SELECT meta_value FROM game_meta WHERE meta_key='season_id' LIMIT 1");
     const seasonId = Number(season[0]?.meta_value || 1);
     const results = [];
     const playersPerPack = Math.max(1, Math.min(5, Number(pack.players) || 3));
     const totalCards = playersPerPack * count;
     const perCardPrice = Math.floor(totalPrice / totalCards);
+    const selectedIds = Array.from({ length: totalCards }, () =>
+      chooseWeightedPlayerId(rarityIndex, pack.weights)
+    );
+    const selectedPlayers = await getCatalogPlayersByIds(conn, selectedIds);
 
     for (let index = 0; index < totalCards; index += 1) {
-      const player = chooseWeightedRarity(buckets, pack.weights);
+      const player = selectedPlayers.get(selectedIds[index]);
+      if (!player) throw new Error('A selected player could not be loaded from the EAFC26 catalog.');
       const cardInstanceId = await createPlayerCard(conn, userId, player, 'pack', seasonId);
       results.push({ player, cardInstanceId });
       await conn.query('INSERT INTO market_activity (player_id,user_id,action_type,quantity,price) VALUES (?,?,?,?,?)',
@@ -434,14 +482,18 @@ async function claimPlayer(userId) {
       throw error;
     }
 
-    const buckets = await getRarityBuckets(conn);
+    const rarityIndex = await getRarityIndex(conn);
     const pity = Number(userState.claim_pity_count || 0);
     const weights = [...config.economy.claimWeights];
     const guaranteed = pity >= config.economy.claimPityGuarantee - 1;
     if (!guaranteed) weights[2] += Math.min(55, pity * 2);
-    const player = guaranteed && buckets.gold.length
-      ? buckets.gold[Math.floor(Math.random() * buckets.gold.length)]
-      : chooseWeightedRarity(buckets, weights);
+    const goldIds = rarityIndex.gold;
+    const selectedId = guaranteed && goldIds.length
+      ? goldIds[Math.floor(Math.random() * goldIds.length)]
+      : chooseWeightedPlayerId(rarityIndex, weights);
+    const selectedPlayers = await getCatalogPlayersByIds(conn, [selectedId]);
+    const player = selectedPlayers.get(selectedId);
+    if (!player) throw new Error('The selected player could not be loaded from the EAFC26 catalog.');
 
     const season = await conn.query("SELECT meta_value FROM game_meta WHERE meta_key='season_id' LIMIT 1");
     const cardInstanceId = await createPlayerCard(
@@ -520,5 +572,6 @@ async function getCard(cardReference, userId) {
 module.exports = {
   calculateMarketPrice, refreshMarketWindows, listSystemMarket, buySystemPlayer, sellToSystem,
   createUserListing, listUserListings, buyUserListing, cancelUserListing,
-  openPack, claimPlayer, getClaimStatus, claimStatusFromRow, claimElapsedMs, getCard, getSystemMarketItem, getUserMarketPage, getUserListingById
+  openPack, claimPlayer, getClaimStatus, claimStatusFromRow, claimElapsedMs, getCard, getSystemMarketItem, getUserMarketPage, getUserListingById,
+  getRarityIndex, invalidateRarityIndex
 };

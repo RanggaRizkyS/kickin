@@ -251,8 +251,7 @@ async function handlePackButton(interaction) {
         name: `Top pull · ${truncate(featured.player.name, 48)}`,
         value: `**${Math.round(Number(featured.player.overall))} OVR** · ${featured.player.positions?.primary || '-'} · ${rarity.toUpperCase()}\nCard ID · \`${featured.publicId}\``,
         inline: true
-      })
-      .setImage('attachment://pack-highest-player.png');
+      });
 
     if (remaining.length) embed.addFields(...packResultsFields(remaining));
     return interaction.editReply({ embeds: [embed], files: [file], attachments: [], components: [] });

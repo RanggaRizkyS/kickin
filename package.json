@@ -1,16 +1,23 @@
 {
   "name": "football-club-discord-bot",
-  "version": "2.5.0",
+  "version": "2.9.0",
   "private": true,
-  "description": "Discord football club game with consistent English copy, fixed-width embed tables, player collection, squad management, and 90-minute match simulation",
+  "description": "Discord football club game using the EAFC26 DataHub player catalog, public Soccer Guru-inspired pricing and chemistry rules, and Joko Soccer match systems",
   "main": "src/index.js",
   "scripts": {
-    "start": "node src/index.js",
+    "start": "node scripts/ensure-eafc26-data.js && node src/index.js",
     "dev": "node --watch src/index.js",
     "deploy-commands": "node src/deploy-commands.js",
     "check": "node scripts/check.js",
     "test": "node --test scripts/*.test.js",
-    "hash-admin-password": "node scripts/hash-admin-password.js"
+    "hash-admin-password": "node scripts/hash-admin-password.js",
+    "data:download": "node scripts/download-eafc26.js",
+    "data:import": "node scripts/import-eafc26.js",
+    "data:inspect": "node scripts/inspect-eafc26.js",
+    "cards:prefetch": "node scripts/prefetch-card-images.js",
+    "cards:status": "node scripts/card-image-cache-status.js",
+    "portraits:prefetch": "node scripts/prefetch-sofifa-portraits.js",
+    "portraits:status": "node scripts/sofifa-portrait-cache-status.js"
   },
   "engines": {
     "node": ">=20.0.0"
@@ -18,8 +25,9 @@
   "dependencies": {
     "@napi-rs/canvas": "1.2.0",
     "bcryptjs": "2.4.3",
+    "csv-parse": "5.6.0",
     "discord.js": "14.21.0",
     "dotenv": "16.4.7",
-    "mariadb": "3.4.0"
+    "mariadb": "3.5.5"
   }
 }

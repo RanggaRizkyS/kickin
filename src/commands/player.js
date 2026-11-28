@@ -38,8 +38,7 @@ module.exports = {
         { name: 'Strong Foot', value: `**${player.strong_foot || '-'}**`, inline: true },
         { name: 'Skills', value: (player.skills || []).map(item => item.name).join(', ') || 'None' },
         { name: 'Attributes', value: statsText || 'No stats' }
-      )
-      .setImage('attachment://player-card.png');
+      );
     await interaction.editReply({ embeds: [embed], files: [file] });
   }
 };
